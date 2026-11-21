@@ -70,7 +70,23 @@ public final class MainActivity extends Activity {
     }
     private void showContacts(){
         base("Контакты");
-        TextView intro=label("Найди людей в kentGram",15,MUTED,false);intro.setPadding(0,0,0,dp(10));content.addView(intro);
+        TextView heading=label("Мои контакты",17,TEXT,true);content.addView(heading);
+        LinearLayout contactsList=new LinearLayout(this);contactsList.setOrientation(1);content.addView(contactsList);
+        requestGet("/contacts",r->{
+            contactsList.removeAllViews();JSONArray contacts=r.optJSONArray("contacts");
+            if(contacts==null||contacts.length()==0){contactsList.addView(label("Пока нет контактов. Найди пользователя ниже и открой его профиль, чтобы подписаться.",13,MUTED,false));}
+            else for(int i=0;i<contacts.length();i++){
+                JSONObject u=contacts.optJSONObject(i);if(u==null)continue;
+                String username=u.optString("username"),name=u.optString("display_name");
+                LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(13),dp(10),dp(13),dp(10));card.setBackground(round(PANEL,13));
+                card.addView(label(name.isEmpty()?"@"+username:name,15,TEXT,true));
+                card.addView(label("@"+username,12,MUTED,false));
+                Button open=button("Профиль");card.addView(open);
+                open.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(7);contactsList.addView(card,lp);
+            }
+        });
+        TextView discover=label("Найти людей",17,TEXT,true);discover.setPadding(0,dp(18),0,dp(8));content.addView(discover);
         EditText query=field("Имя или username");content.addView(query);
         Button search=button("Найти пользователей");content.addView(search);
         LinearLayout results=new LinearLayout(this);results.setOrientation(1);content.addView(results);
@@ -84,8 +100,8 @@ public final class MainActivity extends Activity {
                     JSONObject u=users.optJSONObject(i);if(u==null)continue;
                     String username=u.optString("username"),name=u.optString("display_name");
                     LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(13),dp(11),dp(13),dp(11));card.setBackground(round(PANEL,14));
-                    TextView title=label(name.isEmpty()?"@"+username:name,16,TEXT,true);
-                    TextView handle=label("@"+username,13,MUTED,false);card.addView(title);card.addView(handle);
+                    card.addView(label(name.isEmpty()?"@"+username:name,16,TEXT,true));
+                    card.addView(label("@"+username,13,MUTED,false));
                     Button open=button("Открыть профиль");card.addView(open);
                     open.setOnClickListener(x->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
                     LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.bottomMargin=dp(8);results.addView(card,cp);
