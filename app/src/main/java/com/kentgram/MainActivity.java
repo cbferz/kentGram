@@ -61,7 +61,7 @@ public final class MainActivity extends Activity {
 
             TextView icon=label(icons[i],22,selected?0xFF5685FF:0xFFE4E8F0,true);
             icon.setGravity(Gravity.CENTER);
-            TextView text=label(labels[i],10.5f,selected?0xFF5685FF:0xFFE4E8F0,true);
+            TextView text=label(labels[i],10,selected?0xFF5685FF:0xFFE4E8F0,true);
             text.setGravity(Gravity.CENTER);
             text.setMaxLines(1);
             text.setIncludeFontPadding(false);
