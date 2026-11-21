@@ -21,7 +21,7 @@ jobs:
         run: go mod tidy
       - name: Format Go source
         working-directory: server
-        run: test -z "$(gofmt -l ./cmd ./internal)"
+        run: gofmt -w ./cmd ./internal
       - name: Test and compile
         working-directory: server
         run: |
