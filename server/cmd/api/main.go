@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kentgram/server/internal/config"
-	"github.com/kentgram/server/internal/httpapi"
-	"github.com/kentgram/server/internal/store"
+	"github.com/cbferz/kentGram/server/internal/config"
+	"github.com/cbferz/kentGram/server/internal/httpapi"
+	"github.com/cbferz/kentGram/server/internal/store"
 )
 
 func main() {
