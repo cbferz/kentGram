@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool" 
 )
 
 type Store struct {
@@ -45,8 +45,6 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(64) NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS users_created_at_idx ON users(created_at);
-`)
 	return err
 }
 
@@ -77,7 +75,7 @@ func (s *Store) UserByEmail(ctx context.Context, email string) (User, error) {
 SELECT id, username, email, display_name, password_hash, created_at
 FROM users WHERE email = $1
 `, email).Scan(
-		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.CreatedAt,
+		&user.ID, &user.Username, &user.Email, &user.DisplayName, &user.PasswordHash, &user.CreatedAt,
 	)
 	return user, normalizeDBError(err)
 }
