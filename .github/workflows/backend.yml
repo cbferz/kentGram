@@ -10,20 +10,47 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kentgram
+          POSTGRES_PASSWORD: kentgram_ci_only
+          POSTGRES_DB: kentgram_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kentgram -d kentgram_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Integration tests run against this real database and skip when unset.
+      TEST_DATABASE_URL: postgres://kentgram:kentgram_ci_only@localhost:5432/kentgram_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
           cache-dependency-path: server/go.sum
-      - name: Resolve and verify Go dependencies
+      - name: Resolve Go dependencies
         working-directory: server
         run: go mod tidy
-      - name: Format Go source
-        working-directory: server
-        run: gofmt -w ./cmd ./internal
-      - name: Test and compile
+      - name: Check formatting
         working-directory: server
         run: |
-          go test ./...
-          CGO_ENABLED=0 go build ./cmd/api
+          unformatted="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Vet
+        working-directory: server
+        run: go vet ./...
+      - name: Test
+        working-directory: server
+        run: go test -race -count=1 ./...
+      - name: Build
+        working-directory: server
+        run: CGO_ENABLED=0 go build ./cmd/api

@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,9 +33,28 @@ jobs:
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
-      - name: Upload APK
+      # Actions artifact storage is an account-wide quota and can be exhausted
+      # by unrelated repositories, which must not turn a successful build red.
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: kentgram-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
           if-no-files-found: error
+
+      # Release assets do not consume Actions artifact storage, so this is the
+      # reliable download location for the latest debug build of main.
+      - name: Publish APK as rolling prerelease
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk kentgram-debug.apk
+          gh release delete debug-latest --cleanup-tag --yes || true
+          gh release create debug-latest kentgram-debug.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Debug APK (${GITHUB_SHA::7})" \
+            --notes "Automated debug build of commit $GITHUB_SHA. Debug-signed, not for production distribution."
