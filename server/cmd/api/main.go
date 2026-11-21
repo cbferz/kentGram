@@ -28,7 +28,7 @@ func main() {
 		log.Fatalf("database migration: %v", err)
 	}
 
-	handler := httpapi.New(db, cfg.JWTSecret).Routes()
+	handler := httpapi.New(db, cfg).Routes()
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           handler,
