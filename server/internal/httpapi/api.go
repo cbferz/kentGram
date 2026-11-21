@@ -58,6 +58,11 @@ func (a *API) Routes() http.Handler {
 			r.Delete("/sessions/{sessionID}", a.revokeSession)
 			r.Post("/sessions/revoke-others", a.revokeOtherSessions)
 
+			r.Get("/chats", a.listChats)
+			r.Post("/chats/direct", a.createDirectChat)
+			r.Get("/chats/{chatID}/messages", a.listChatMessages)
+			r.Post("/chats/{chatID}/messages", a.sendChatMessage)
+
 			r.Get("/me", a.me)
 			r.Patch("/me/profile", a.updateProfile)
 			r.Get("/users/search", a.searchUsers)
