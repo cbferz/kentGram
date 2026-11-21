@@ -1,4 +1,4 @@
-module github.com/cbferz/kentGram/server
+module github.com/cbferz/kentgram/server
 
 go 1.23
 
