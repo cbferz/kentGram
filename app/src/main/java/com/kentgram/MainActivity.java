@@ -22,7 +22,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private SharedPreferences prefs;
     private String token="";
-    private LinearLayout root,content,top;
+    private LinearLayout root,content,top,navBar;
     private EditText composer;
     private long currentChat=0;
 
@@ -32,10 +32,98 @@ public final class MainActivity extends Activity {
         root=new LinearLayout(this);root.setOrientation(1);root.setBackgroundColor(BG);
         top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(18),dp(12),dp(18),dp(12));top.setBackgroundColor(PANEL);
         TextView h=label(title,21,TEXT,true);top.addView(h,new LinearLayout.LayoutParams(0,-2,1));root.addView(top,new LinearLayout.LayoutParams(-1,-2));
-        ScrollView scroll=new ScrollView(this);content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(14),dp(12),dp(14),dp(12));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
+        ScrollView scroll=new ScrollView(this);content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(14),dp(12),dp(14),dp(12));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        buildNavigation(title);
+        setContentView(root);
     }
+
+    private void buildNavigation(String title){
+        navBar=new LinearLayout(this);navBar.setGravity(Gravity.CENTER);navBar.setOrientation(LinearLayout.HORIZONTAL);
+        navBar.setPadding(dp(5),dp(7),dp(5),dp(7));navBar.setBackgroundColor(PANEL);
+        String[] labels={"Чаты","Контакты","Лента","Настройки","Профиль"};
+        String[] icons={"▤","♧","▧","⚙","●"};
+        String[] screens={"chats","contacts","feed","settings","profile"};
+        String active=title.equals("kentGram")?"chats":title.equals("Контакты")?"contacts":title.equals("Лента")?"feed":title.equals("Настройки")?"settings":"";
+        for(int i=0;i<labels.length;i++){
+            final String screen=screens[i];
+            LinearLayout item=new LinearLayout(this);item.setGravity(Gravity.CENTER);item.setOrientation(1);
+            item.setPadding(dp(2),dp(7),dp(2),dp(7));
+            android.graphics.drawable.GradientDrawable bg=round(screen.equals(active)?0xFF17466A:0xFF202A38,24);
+            item.setBackground(bg);
+            TextView icon=label(icons[i],16,screen.equals(active)?0xFF70C7FF:MUTED,true);
+            TextView text=label(labels[i],9,screen.equals(active)?TEXT:MUTED,true);
+            text.setMaxLines(1);text.setGravity(Gravity.CENTER);text.setIncludeFontPadding(false);
+            item.addView(icon);item.addView(text);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(48),1);lp.setMargins(dp(2),0,dp(2),0);navBar.addView(item,lp);
+            item.setOnClickListener(v->navigate(screen));
+        }
+        root.addView(navBar,new LinearLayout.LayoutParams(-1,-2));
+    }
+    private void navigate(String screen){
+        switch(screen){
+            case "chats":showChats();break;
+            case "contacts":showContacts();break;
+            case "feed":showFeed();break;
+            case "settings":showSettings();break;
+            case "profile":startActivity(new Intent(this,ProfileActivity.class));break;
+        }
+    }
+    private void showContacts(){
+        base("Контакты");
+        TextView heading=label("Мои контакты",17,TEXT,true);content.addView(heading);
+        LinearLayout contactsList=new LinearLayout(this);contactsList.setOrientation(1);content.addView(contactsList);
+        requestGet("/contacts",r->{
+            contactsList.removeAllViews();JSONArray contacts=r.optJSONArray("contacts");
+            if(contacts==null||contacts.length()==0){contactsList.addView(label("Пока нет контактов. Найди пользователя ниже и открой его профиль, чтобы подписаться.",13,MUTED,false));}
+            else for(int i=0;i<contacts.length();i++){
+                JSONObject u=contacts.optJSONObject(i);if(u==null)continue;
+                String username=u.optString("username"),name=u.optString("display_name");
+                LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(13),dp(10),dp(13),dp(10));card.setBackground(round(PANEL,13));
+                card.addView(label(name.isEmpty()?"@"+username:name,15,TEXT,true));
+                card.addView(label("@"+username,12,MUTED,false));
+                Button open=button("Профиль");card.addView(open);
+                open.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(7);contactsList.addView(card,lp);
+            }
+        });
+        TextView discover=label("Найти людей",17,TEXT,true);discover.setPadding(0,dp(18),0,dp(8));content.addView(discover);
+        EditText query=field("Имя или username");content.addView(query);
+        Button search=button("Найти пользователей");content.addView(search);
+        LinearLayout results=new LinearLayout(this);results.setOrientation(1);content.addView(results);
+        search.setOnClickListener(v->{
+            String q=query.getText().toString().trim();if(q.length()<2){toast("Введите минимум 2 символа");return;}
+            search.setEnabled(false);
+            requestGet("/users/search?q="+enc(q),r->{
+                search.setEnabled(true);results.removeAllViews();JSONArray users=r.optJSONArray("users");
+                if(users==null||users.length()==0){results.addView(label("Ничего не найдено",14,MUTED,false));return;}
+                for(int i=0;i<users.length();i++){
+                    JSONObject u=users.optJSONObject(i);if(u==null)continue;
+                    String username=u.optString("username"),name=u.optString("display_name");
+                    LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(13),dp(11),dp(13),dp(11));card.setBackground(round(PANEL,14));
+                    card.addView(label(name.isEmpty()?"@"+username:name,16,TEXT,true));
+                    card.addView(label("@"+username,13,MUTED,false));
+                    Button open=button("Открыть профиль");card.addView(open);
+                    open.setOnClickListener(x->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
+                    LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.bottomMargin=dp(8);results.addView(card,cp);
+                }
+            });
+        });
+    }
+    private void showFeed(){
+        base("Лента");
+        content.addView(label("Публикации появятся следующим этапом",17,TEXT,true));
+        content.addView(label("Сейчас готовим API публикаций, реакции и комментарии. Пока здесь нет демонстрационных или выдуманных постов.",14,MUTED,false));
+    }
+    private void showSettings(){
+        base("Настройки");
+        content.addView(label("Аккаунт",13,MUTED,true));
+        Button profile=button("Мой профиль");content.addView(profile);profile.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));
+        Button logout=button("Выйти из аккаунта");content.addView(logout);
+        logout.setOnClickListener(v->{request("/auth/logout",new JSONObject(),true,r->{});prefs.edit().clear().apply();token="";showAuth();});
+    }
+
     private void showAuth(){
-        base("kentGram");TextView info=label("Общение начинается здесь",16,MUTED,true);info.setPadding(0,dp(18),0,dp(18));content.addView(info);
+        base("kentGram");if(navBar!=null)root.removeView(navBar);TextView info=label("Общение начинается здесь",16,MUTED,true);info.setPadding(0,dp(18),0,dp(18));content.addView(info);
         EditText email=field("Email"),password=field("Пароль"),username=field("Имя пользователя — для регистрации");password.setInputType(129);content.addView(email);content.addView(password);content.addView(username);
         Button login=button("Войти"),register=button("Создать аккаунт");content.addView(login);content.addView(register);
         login.setOnClickListener(v->auth(email.getText().toString(),password.getText().toString(),null));
@@ -64,7 +152,7 @@ public final class MainActivity extends Activity {
     private void openChat(long id,String peer){
         currentChat=id;base(peer);
         // Replace the generic list container with the dedicated message history.
-        root.removeViewAt(1);
+        root.removeViewAt(1);if(navBar!=null)root.removeView(navBar);
         Button back=button("‹ Чаты");back.setTextSize(13);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,-2);top.addView(back,bp);back.setOnClickListener(v->showChats());
         ScrollView history=new ScrollView(this);LinearLayout messages=new LinearLayout(this);messages.setOrientation(1);messages.setPadding(dp(10),dp(8),dp(10),dp(8));history.addView(messages);root.addView(history,new LinearLayout.LayoutParams(-1,0,1));
         LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(dp(8),dp(7),dp(8),dp(7));bar.setBackgroundColor(PANEL);composer=field("Сообщение");bar.addView(composer,new LinearLayout.LayoutParams(0,-2,1));Button send=button("➤");send.setTextSize(16);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(58),dp(48));bar.addView(send,sp);root.addView(bar);

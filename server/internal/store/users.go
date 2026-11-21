@@ -136,3 +136,29 @@ func (s *Store) Unfollow(ctx context.Context, followerID, targetID int64) error 
 		`DELETE FROM follows WHERE follower_id=$1 AND following_id=$2`, followerID, targetID)
 	return err
 }
+
+ 
+// FollowingUsers returns the accounts the viewer follows, which form the
+// initial contact list. The viewer ID is also used for relationship metadata.
+func (s *Store) FollowingUsers(ctx context.Context, viewerID int64) ([]PublicProfile, error) {
+	rows, err := s.Pool.Query(ctx,
+		profileSelect+`WHERE EXISTS (
+			SELECT 1 FROM follows f
+			WHERE f.follower_id=$1 AND f.following_id=u.id
+		) ORDER BY lower(u.username)`,
+		viewerID, viewerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []PublicProfile{}
+	for rows.Next() {
+		p, err := scanProfile(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

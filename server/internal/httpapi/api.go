@@ -63,6 +63,7 @@ func (a *API) Routes() http.Handler {
 			r.Get("/chats/{chatID}/messages", a.listChatMessages)
 			r.Post("/chats/{chatID}/messages", a.sendChatMessage)
 
+			r.Get("/contacts", a.contacts)
 			r.Get("/me", a.me)
 			r.Patch("/me/profile", a.updateProfile)
 			r.Get("/users/search", a.searchUsers)
