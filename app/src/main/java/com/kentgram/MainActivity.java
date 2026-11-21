@@ -38,26 +38,45 @@ public final class MainActivity extends Activity {
     }
 
     private void buildNavigation(String title){
-        navBar=new LinearLayout(this);navBar.setGravity(Gravity.CENTER);navBar.setOrientation(LinearLayout.HORIZONTAL);
-        navBar.setPadding(dp(5),dp(7),dp(5),dp(7));navBar.setBackgroundColor(PANEL);
+        navBar=new LinearLayout(this);
+        navBar.setGravity(Gravity.CENTER);
+        navBar.setOrientation(LinearLayout.HORIZONTAL);
+        navBar.setPadding(dp(5),dp(5),dp(5),dp(5));
+        navBar.setBackground(round(0xFF202124,32));
+
         String[] labels={"Чаты","Контакты","Лента","Настройки","Профиль"};
         String[] icons={"▤","♧","▧","⚙","●"};
         String[] screens={"chats","contacts","feed","settings","profile"};
-        String active=title.equals("kentGram")?"chats":title.equals("Контакты")?"contacts":title.equals("Лента")?"feed":title.equals("Настройки")?"settings":"";
+        String active=title.equals("kentGram")?"chats":title.equals("Контакты")?"contacts":
+                title.equals("Лента")?"feed":title.equals("Настройки")?"settings":"";
+
         for(int i=0;i<labels.length;i++){
             final String screen=screens[i];
-            LinearLayout item=new LinearLayout(this);item.setGravity(Gravity.CENTER);item.setOrientation(1);
-            item.setPadding(dp(2),dp(7),dp(2),dp(7));
-            android.graphics.drawable.GradientDrawable bg=round(screen.equals(active)?0xFF17466A:0xFF202A38,24);
-            item.setBackground(bg);
-            TextView icon=label(icons[i],16,screen.equals(active)?0xFF70C7FF:MUTED,true);
-            TextView text=label(labels[i],9,screen.equals(active)?TEXT:MUTED,true);
-            text.setMaxLines(1);text.setGravity(Gravity.CENTER);text.setIncludeFontPadding(false);
-            item.addView(icon);item.addView(text);
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(48),1);lp.setMargins(dp(2),0,dp(2),0);navBar.addView(item,lp);
+            boolean selected=screen.equals(active);
+            LinearLayout item=new LinearLayout(this);
+            item.setGravity(Gravity.CENTER);
+            item.setOrientation(1);
+            item.setPadding(dp(1),dp(5),dp(1),dp(5));
+            item.setBackground(round(selected?0xFF293246:Color.TRANSPARENT,26));
+
+            TextView icon=label(icons[i],22,selected?0xFF5685FF:0xFFE4E8F0,true);
+            icon.setGravity(Gravity.CENTER);
+            TextView text=label(labels[i],10.5f,selected?0xFF5685FF:0xFFE4E8F0,true);
+            text.setGravity(Gravity.CENTER);
+            text.setMaxLines(1);
+            text.setIncludeFontPadding(false);
+            item.addView(icon);
+            item.addView(text);
+
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(58),1);
+            lp.setMargins(dp(1),0,dp(1),0);
+            navBar.addView(item,lp);
+            item.setContentDescription(labels[i]);
             item.setOnClickListener(v->navigate(screen));
         }
-        root.addView(navBar,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout.LayoutParams navParams=new LinearLayout.LayoutParams(-1,-2);
+        navParams.setMargins(dp(10),dp(4),dp(10),dp(7));
+        root.addView(navBar,navParams);
     }
     private void navigate(String screen){
         switch(screen){
@@ -165,7 +184,7 @@ public final class MainActivity extends Activity {
     private interface Done{void accept(JSONObject value);}
     private void requestGet(String path,Done done){request(path,null,true,done);}
     private void request(String path,JSONObject body,boolean auth,Done done){
-        io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);out=new JSONObject(b.toString("UTF-8"));}c.disconnect();}catch(Exception e){try{out.put("error","network_error");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{if(code>=200&&code<300)done.accept(result);else if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}else toast(result.optString("error","Ошибка соединения")+" ("+code+")");});});
+        io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);String responseText=b.toString("UTF-8");try{out=new JSONObject(responseText);}catch(JSONException parseError){out=new JSONObject();out.put("error",status==404?"endpoint_not_found":status>=500?"server_error":"http_error");}}c.disconnect();}catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{if(code>=200&&code<300)done.accept(result);else if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}else toast(result.optString("error","Ошибка соединения")+" ("+code+")");});});
     }
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
     private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(13),dp(8),dp(13),dp(8));e.setBackground(round(PANEL,12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
