@@ -2,7 +2,10 @@ package store
 
 import (
     "context"
+    "errors"
     "time"
+
+    "github.com/jackc/pgx/v5"
 )
 
 type ChatSummary struct {
