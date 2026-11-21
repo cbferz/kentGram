@@ -53,7 +53,7 @@ public final class MainActivity extends Activity {
         requestGet("/chats",r->{if(content.getChildCount()>2)content.removeViews(2,content.getChildCount()-2);JSONArray a=r.optJSONArray("chats");
             if(a==null||a.length()==0){content.addView(label("Пока нет переписок. Нажми «Новая переписка», чтобы найти пользователя.",15,MUTED,false));return;}
             for(int i=0;i<a.length();i++){JSONObject c=a.optJSONObject(i);if(c==null)continue;long id=c.optLong("id");String name=c.optString("peer_display_name");if(name.isEmpty())name="@"+c.optString("peer_username");String last=c.optString("last_message","Начните общение");
-                LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(14),dp(12),dp(14),dp(12));card.setBackground(round(PANEL,14));TextView title=label(name,16,TEXT,true);TextView preview=label(last.isEmpty()?"Нет сообщений":last,14,MUTED,false);card.addView(title);card.addView(preview);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(8);content.addView(card,lp);card.setOnClickListener(v->openChat(id,name));}
+                final long chatId=id;final String peerName=name;LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(14),dp(12),dp(14),dp(12));card.setBackground(round(PANEL,14));TextView title=label(peerName,16,TEXT,true);TextView preview=label(last.isEmpty()?"Нет сообщений":last,14,MUTED,false);card.addView(title);card.addView(preview);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(8);content.addView(card,lp);card.setOnClickListener(v->openChat(chatId,peerName));}
         });
     }
     private void showUserSearch(){
