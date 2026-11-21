@@ -11,6 +11,16 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+
+func (a *API) contacts(w http.ResponseWriter, r *http.Request) {
+	users, err := a.db.FollowingUsers(r.Context(), userID(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "contacts_load_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"contacts": users})
+}
+
 func (a *API) me(w http.ResponseWriter, r *http.Request) {
 	u, err := a.db.UserByID(r.Context(), userID(r))
 	if err != nil {
