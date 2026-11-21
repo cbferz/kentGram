@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/cbferz/kentGram/server/internal/store"
+	"github.com/cbferz/kentgram/server/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
 
