@@ -1,190 +1,23 @@
 package httpapi
-
-import (
-	"encoding/json"
-	"errors"
-	"net/http"
-	"regexp"
-	"strconv"
-	"strings"
-	"time"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/cbferz/kentgram/server/internal/store"
-	"golang.org/x/crypto/bcrypt"
-)
-
-type API struct {
-	db        *store.Store
-	jwtSecret []byte
-}
-
-func New(db *store.Store, secret string) *API {
-	return &API{db: db, jwtSecret: []byte(secret)}
-}
-
-func (a *API) Routes() http.Handler {
-	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, middleware.Timeout(20*time.Second))
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		if err := a.db.Pool.Ping(r.Context()); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "database_unavailable")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "kentgram-api"})
-	})
-	r.Route("/api/v1", func(r chi.Router) {
-		r.Post("/auth/register", a.register)
-		r.Post("/auth/login", a.login)
-		r.Group(func(r chi.Router) {
-			r.Use(a.authenticate)
-			r.Get("/me", a.me)
-		})
-	})
-	return r
-}
-
-type registerRequest struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]{3,32}$`)
-
-func (a *API) register(w http.ResponseWriter, r *http.Request) {
-	var req registerRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json")
-		return
-	}
-	req.Username = strings.TrimSpace(req.Username)
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	if !usernamePattern.MatchString(req.Username) || !strings.Contains(req.Email, "@") ||
-		len(req.Email) > 254 || len(req.Password) < 10 || len(req.Password) > 72 {
-		writeError(w, http.StatusBadRequest, "invalid_registration_data")
-		return
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "password_hash_failed")
-		return
-	}
-	user, err := a.db.CreateUser(r.Context(), req.Username, req.Email, string(hash))
-	if errors.Is(err, store.ErrConflict) {
-		writeError(w, http.StatusConflict, "username_or_email_taken")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "registration_failed")
-		return
-	}
-	token, err := a.issueToken(user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "token_issue_failed")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"user": user, "access_token": token, "token_type": "Bearer"})
-}
-
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-func (a *API) login(w http.ResponseWriter, r *http.Request) {
-	var req loginRequest
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json")
-		return
-	}
-	user, err := a.db.UserByEmail(r.Context(), strings.ToLower(strings.TrimSpace(req.Email)))
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
-		writeError(w, http.StatusUnauthorized, "invalid_credentials")
-		return
-	}
-	token, err := a.issueToken(user.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "token_issue_failed")
-		return
-	}
-	user.PasswordHash = ""
-	writeJSON(w, http.StatusOK, map[string]any{"user": user, "access_token": token, "token_type": "Bearer"})
-}
-
-func (a *API) me(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(r.Header.Get("X-User-ID"), 10, 64)
-	user, err := a.db.UserByID(r.Context(), id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user_not_found")
-		return
-	}
-	writeJSON(w, http.StatusOK, user)
-}
-
-func (a *API) issueToken(userID int64) (string, error) {
-	claims := jwt.MapClaims{
-		"sub": strconv.FormatInt(userID, 10),
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(24 * time.Hour).Unix(),
-		"iss": "kentgram",
-	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.jwtSecret)
-}
-
-func (a *API) authenticate(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		header := strings.TrimSpace(r.Header.Get("Authorization"))
-		parts := strings.SplitN(header, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			writeError(w, http.StatusUnauthorized, "missing_bearer_token")
-			return
-		}
-		token, err := jwt.Parse(parts[1], func(token *jwt.Token) (any, error) {
-			if token.Method != jwt.SigningMethodHS256 {
-				return nil, errors.New("unexpected signing method")
-			}
-			return a.jwtSecret, nil
-		}, jwt.WithIssuer("kentgram"))
-		if err != nil || !token.Valid {
-			writeError(w, http.StatusUnauthorized, "invalid_token")
-			return
-		}
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			writeError(w, http.StatusUnauthorized, "invalid_token")
-			return
-		}
-		sub, ok := claims["sub"].(string)
-		if !ok {
-			writeError(w, http.StatusUnauthorized, "invalid_token")
-			return
-		}
-		if _, err := strconv.ParseInt(sub, 10, 64); err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid_token")
-			return
-		}
-		r.Header.Set("X-User-ID", sub)
-		next.ServeHTTP(w, r)
-	})
-}
-
-func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	return dec.Decode(dst)
-}
-
-func writeJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
-
-func writeError(w http.ResponseWriter, status int, code string) {
-	writeJSON(w, status, map[string]string{"error": code})
-}
-
+import("encoding/json";"errors";"net/http";"net/url";"regexp";"strconv";"strings";"time";"github.com/go-chi/chi/v5";"github.com/go-chi/chi/v5/middleware";"github.com/golang-jwt/jwt/v5";"github.com/cbferz/kentgram/server/internal/store";"golang.org/x/crypto/bcrypt")
+type API struct{db *store.Store;jwtSecret []byte}
+func New(db *store.Store,secret string)*API{return &API{db,[]byte(secret)}}
+func(a *API)Routes()http.Handler{r:=chi.NewRouter();r.Use(middleware.RequestID,middleware.RealIP,middleware.Recoverer,middleware.Timeout(20*time.Second));r.Get("/health",func(w http.ResponseWriter,r *http.Request){if e:=a.db.Pool.Ping(r.Context());e!=nil{writeError(w,503,"database_unavailable");return};writeJSON(w,200,map[string]string{"status":"ok","service":"kentgram-api"})});r.Route("/api/v1",func(r chi.Router){r.Post("/auth/register",a.register);r.Post("/auth/login",a.login);r.Group(func(r chi.Router){r.Use(a.authenticate);r.Get("/me",a.me);r.Patch("/me/profile",a.updateProfile);r.Get("/users/search",a.searchUsers);r.Get("/users/{username}",a.publicProfile);r.Post("/users/{userID}/follow",a.follow);r.Delete("/users/{userID}/follow",a.unfollow)})});return r}
+type registerRequest struct{Username string `json:"username"`;Email string `json:"email"`;Password string `json:"password"`}
+var usernamePattern=regexp.MustCompile(`^[a-zA-Z0-9_]{3,32}$`)
+func(a *API)register(w http.ResponseWriter,r *http.Request){var q registerRequest;if decodeJSON(w,r,&q)!=nil{writeError(w,400,"invalid_json");return};q.Username=strings.TrimSpace(q.Username);q.Email=strings.ToLower(strings.TrimSpace(q.Email));if !usernamePattern.MatchString(q.Username)||!strings.Contains(q.Email,"@")||len(q.Email)>254||len(q.Password)<10||len(q.Password)>72{writeError(w,400,"invalid_registration_data");return};h,e:=bcrypt.GenerateFromPassword([]byte(q.Password),bcrypt.DefaultCost);if e!=nil{writeError(w,500,"password_hash_failed");return};u,e:=a.db.CreateUser(r.Context(),q.Username,q.Email,string(h));if errors.Is(e,store.ErrConflict){writeError(w,409,"username_or_email_taken");return};if e!=nil{writeError(w,500,"registration_failed");return};t,e:=a.issueToken(u.ID);if e!=nil{writeError(w,500,"token_issue_failed");return};writeJSON(w,201,map[string]any{"user":u,"access_token":t,"token_type":"Bearer"})}
+type loginRequest struct{Email string `json:"email"`;Password string `json:"password"`}
+func(a *API)login(w http.ResponseWriter,r *http.Request){var q loginRequest;if decodeJSON(w,r,&q)!=nil{writeError(w,400,"invalid_json");return};u,e:=a.db.UserByEmail(r.Context(),strings.ToLower(strings.TrimSpace(q.Email)));if e!=nil||bcrypt.CompareHashAndPassword([]byte(u.PasswordHash),[]byte(q.Password))!=nil{writeError(w,401,"invalid_credentials");return};t,e:=a.issueToken(u.ID);if e!=nil{writeError(w,500,"token_issue_failed");return};u.PasswordHash="";writeJSON(w,200,map[string]any{"user":u,"access_token":t,"token_type":"Bearer"})}
+func(a *API)me(w http.ResponseWriter,r *http.Request){id,_:=strconv.ParseInt(r.Header.Get("X-User-ID"),10,64);u,e:=a.db.UserByID(r.Context(),id);if e!=nil{writeError(w,404,"user_not_found");return};writeJSON(w,200,u)}
+type profileRequest struct{DisplayName string `json:"display_name"`;Bio string `json:"bio"`;AvatarURL string `json:"avatar_url"`}
+func(a *API)updateProfile(w http.ResponseWriter,r *http.Request){var q profileRequest;if decodeJSON(w,r,&q)!=nil{writeError(w,400,"invalid_json");return};q.DisplayName=strings.TrimSpace(q.DisplayName);q.Bio=strings.TrimSpace(q.Bio);q.AvatarURL=strings.TrimSpace(q.AvatarURL);if len(q.DisplayName)>64||len(q.Bio)>160||len(q.AvatarURL)>2048{writeError(w,400,"profile_field_too_long");return};if q.AvatarURL!=""{u,e:=url.ParseRequestURI(q.AvatarURL);if e!=nil||u.Scheme!="https"||u.Host==""{writeError(w,400,"avatar_url_must_be_https");return}};id,_:=strconv.ParseInt(r.Header.Get("X-User-ID"),10,64);u,e:=a.db.UpdateProfile(r.Context(),id,q.DisplayName,q.Bio,q.AvatarURL);if e!=nil{writeError(w,500,"profile_update_failed");return};writeJSON(w,200,u)}
+func(a *API)publicProfile(w http.ResponseWriter,r *http.Request){id,_:=strconv.ParseInt(r.Header.Get("X-User-ID"),10,64);p,e:=a.db.PublicProfile(r.Context(),chi.URLParam(r,"username"),id);if e!=nil{writeError(w,404,"user_not_found");return};writeJSON(w,200,p)}
+func(a *API)searchUsers(w http.ResponseWriter,r *http.Request){q:=strings.TrimSpace(r.URL.Query().Get("q"));if len(q)<2||len(q)>64{writeError(w,400,"query_must_be_2_to_64_characters");return};id,_:=strconv.ParseInt(r.Header.Get("X-User-ID"),10,64);users,e:=a.db.SearchUsers(r.Context(),q,id);if e!=nil{writeError(w,500,"user_search_failed");return};writeJSON(w,200,map[string]any{"users":users})}
+func(a *API)follow(w http.ResponseWriter,r *http.Request){a.changeFollow(w,r,true)}
+func(a *API)unfollow(w http.ResponseWriter,r *http.Request){a.changeFollow(w,r,false)}
+func(a *API)changeFollow(w http.ResponseWriter,r *http.Request,yes bool){viewer,_:=strconv.ParseInt(r.Header.Get("X-User-ID"),10,64);target,e:=strconv.ParseInt(chi.URLParam(r,"userID"),10,64);if e!=nil||target<=0{writeError(w,400,"invalid_user_id");return};if viewer==target{writeError(w,400,"cannot_follow_self");return};if yes{e=a.db.Follow(r.Context(),viewer,target)}else{e=a.db.Unfollow(r.Context(),viewer,target)};if errors.Is(e,store.ErrConflict)||errors.Is(e,errors.New("no rows")){writeError(w,404,"user_not_found");return};if e!=nil{writeError(w,500,"follow_update_failed");return};writeJSON(w,200,map[string]any{"success":true,"following":yes})}
+func(a *API)issueToken(id int64)(string,error){c:=jwt.MapClaims{"sub":strconv.FormatInt(id,10),"iat":time.Now().Unix(),"exp":time.Now().Add(24*time.Hour).Unix(),"iss":"kentgram"};return jwt.NewWithClaims(jwt.SigningMethodHS256,c).SignedString(a.jwtSecret)}
+func(a *API)authenticate(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){p:=strings.SplitN(strings.TrimSpace(r.Header.Get("Authorization"))," ",2);if len(p)!=2||!strings.EqualFold(p[0],"Bearer"){writeError(w,401,"missing_bearer_token");return};t,e:=jwt.Parse(p[1],func(t *jwt.Token)(any,error){if t.Method!=jwt.SigningMethodHS256{return nil,errors.New("unexpected signing method")};return a.jwtSecret,nil},jwt.WithIssuer("kentgram"));if e!=nil||!t.Valid{writeError(w,401,"invalid_token");return};c,ok:=t.Claims.(jwt.MapClaims);if !ok{writeError(w,401,"invalid_token");return};sub,ok:=c["sub"].(string);if !ok{writeError(w,401,"invalid_token");return};if _,e=strconv.ParseInt(sub,10,64);e!=nil{writeError(w,401,"invalid_token");return};r.Header.Set("X-User-ID",sub);next.ServeHTTP(w,r)})}
+func decodeJSON(w http.ResponseWriter,r *http.Request,dst any)error{r.Body=http.MaxBytesReader(w,r.Body,1<<20);d:=json.NewDecoder(r.Body);d.DisallowUnknownFields();return d.Decode(dst)}
+func writeJSON(w http.ResponseWriter,s int,v any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.WriteHeader(s);_=json.NewEncoder(w).Encode(v)}
+func writeError(w http.ResponseWriter,s int,c string){writeJSON(w,s,map[string]string{"error":c})}
