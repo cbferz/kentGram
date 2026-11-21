@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool" 
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Store struct {
@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS users_created_at_idx ON users(created_at);
+`)
 	return err
 }
 
