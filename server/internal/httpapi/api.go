@@ -12,8 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
-	"github.com/kentgram/server/internal/store"
+	"github.com/cbferz/kentGram/server/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -189,4 +188,3 @@ func writeError(w http.ResponseWriter, status int, code string) {
 	writeJSON(w, status, map[string]string{"error": code})
 }
 
-var _ = pgx.ErrNoRows
