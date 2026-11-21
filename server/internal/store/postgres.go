@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS users (
     display_name VARCHAR(64) NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS users_created_at_idx ON users(created_at);
 	return err
 }
 
