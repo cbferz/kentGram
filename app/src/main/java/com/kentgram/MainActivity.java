@@ -8,6 +8,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
 import android.content.SharedPreferences;
+import android.content.Intent;
 import org.json.*;
 import java.io.*;
 import java.net.*;
@@ -45,7 +46,7 @@ public final class MainActivity extends Activity {
         request(username==null?"/auth/login":"/auth/register",b,false,r->{token=r.optString("access_token","");if(token.isEmpty()){toast("Сервер не вернул токен");return;}prefs.edit().putString("access_token",token).putString("refresh_token",r.optString("refresh_token","")).apply();showChats();});
     }
     private void showChats(){
-        currentChat=0;base("kentGram");Button find=button("＋  Новая переписка");content.addView(find);find.setOnClickListener(v->showUserSearch());
+        currentChat=0;base("kentGram");Button profile=button("Мой профиль");content.addView(profile);profile.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));Button find=button("＋  Новая переписка");content.addView(find);find.setOnClickListener(v->showUserSearch());
         TextView caption=label("Сообщения",14,MUTED,true);caption.setPadding(0,dp(16),0,dp(8));content.addView(caption);loadChats();
         Button logout=button("Выйти");content.addView(logout);logout.setOnClickListener(v->{request("/auth/logout",new JSONObject(),true,r->{});prefs.edit().clear().apply();token="";showAuth();});
     }
@@ -58,7 +59,7 @@ public final class MainActivity extends Activity {
     }
     private void showUserSearch(){
         base("Новая переписка");EditText q=field("Имя пользователя");content.addView(q);Button search=button("Найти");content.addView(search);
-        search.setOnClickListener(v->{String value=q.getText().toString().trim();if(value.length()<2){toast("Введите минимум 2 символа");return;}requestGet("/users/search?q="+enc(value),r->{if(content.getChildCount()>2)content.removeViews(2,content.getChildCount()-2);JSONArray a=r.optJSONArray("users");if(a==null||a.length()==0){content.addView(label("Пользователи не найдены",14,MUTED,false));return;}for(int i=0;i<a.length();i++){JSONObject u=a.optJSONObject(i);if(u==null)continue;long uid=u.optLong("id");String name=u.optString("display_name");String handle="@"+u.optString("username");Button item=button(name.isEmpty()?handle:name+"  "+handle);content.addView(item);item.setOnClickListener(x->{JSONObject body=new JSONObject();try{body.put("user_id",uid);}catch(Exception ignored){}request("/chats/direct",body,true,created->openChat(created.optLong("chat_id"),name.isEmpty()?handle:name));});}});});
+        search.setOnClickListener(v->{String value=q.getText().toString().trim();if(value.length()<2){toast("Введите минимум 2 символа");return;}requestGet("/users/search?q="+enc(value),r->{if(content.getChildCount()>2)content.removeViews(2,content.getChildCount()-2);JSONArray a=r.optJSONArray("users");if(a==null||a.length()==0){content.addView(label("Пользователи не найдены",14,MUTED,false));return;}for(int i=0;i<a.length();i++){JSONObject u=a.optJSONObject(i);if(u==null)continue;long uid=u.optLong("id");String name=u.optString("display_name");String handle="@"+u.optString("username");LinearLayout row=new LinearLayout(this);row.setOrientation(1);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackground(round(PANEL,12));TextView caption=label((name.isEmpty()?handle:name+"  "+handle),15,TEXT,true);row.addView(caption);Button profile=button("Открыть профиль");row.addView(profile);profile.setOnClickListener(x->{Intent intent=new Intent(this,ProfileActivity.class);intent.putExtra("username",u.optString("username"));startActivity(intent);});Button message=button("Написать");row.addView(message);message.setOnClickListener(x->{JSONObject body=new JSONObject();try{body.put("user_id",uid);}catch(Exception ignored){}request("/chats/direct",body,true,created->openChat(created.optLong("chat_id"),name.isEmpty()?handle:name));});content.addView(row);}});});
     }
     private void openChat(long id,String peer){
         currentChat=id;base(peer);
