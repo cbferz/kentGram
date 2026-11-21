@@ -24,3 +24,5 @@ func(s *Store)Follow(ctx context.Context,f,t int64)error{tag,e:=s.Pool.Exec(ctx,
 func(s *Store)Unfollow(ctx context.Context,f,t int64)error{_,e:=s.Pool.Exec(ctx,`DELETE FROM follows WHERE follower_id=$1 AND following_id=$2`,f,t);return e}
 func norm(e error)error{if errors.Is(e,pgx.ErrNoRows){return e};if e!=nil&&strings.Contains(e.Error(),"duplicate key"){return ErrConflict};return e}
 var ErrConflict=errors.New("record already exists")
+
+var ErrNotFound = pgx.ErrNoRows
