@@ -1,0 +1,28 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+local.properties
+*.keystore
+*.jks
+
+# Go
+server/api
+server/kentgram-api
+server/media/
+server/*.test
+server/go.sum.orig
+
+# Android / Gradle
+.gradle/
+build/
+app/build/
+.idea/
+*.iml
+.cxx/
+captures/
+*.apk
+*.aab
+
+# OS
+.DS_Store
