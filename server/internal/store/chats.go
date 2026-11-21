@@ -39,7 +39,7 @@ func (s *Store) CreateDirectChat(ctx context.Context, me, peer int64) (int64, er
         WHERE c.kind='direct'
         LIMIT 1`, me, peer).Scan(&id)
     if err == nil { return id, tx.Commit(ctx) }
-    if err.Error() != "no rows in result set" { return 0, err }
+    if !errors.Is(err, pgx.ErrNoRows) { return 0, err }
     if err := tx.QueryRow(ctx, `INSERT INTO chats(kind) VALUES('direct') RETURNING id`).Scan(&id); err != nil { return 0, err }
     if _, err := tx.Exec(ctx, `INSERT INTO chat_members(chat_id,user_id) VALUES($1,$2),($1,$3)`, id, me, peer); err != nil { return 0, err }
     return id, tx.Commit(ctx)
