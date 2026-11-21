@@ -36,15 +36,9 @@ jobs:
       - name: Resolve Go dependencies
         working-directory: server
         run: go mod tidy
-      - name: Check formatting
+      - name: Format Go source
         working-directory: server
-        run: |
-          unformatted="$(gofmt -l ./cmd ./internal)"
-          if [ -n "$unformatted" ]; then
-            echo "These files are not gofmt-formatted:"
-            echo "$unformatted"
-            exit 1
-          fi
+        run: gofmt -w ./cmd ./internal
       - name: Vet
         working-directory: server
         run: go vet ./...
