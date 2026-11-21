@@ -107,7 +107,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showAuth(){
-        base("kentGram");TextView info=label("Общение начинается здесь",16,MUTED,true);info.setPadding(0,dp(18),0,dp(18));content.addView(info);
+        base("kentGram");if(navBar!=null)root.removeView(navBar);TextView info=label("Общение начинается здесь",16,MUTED,true);info.setPadding(0,dp(18),0,dp(18));content.addView(info);
         EditText email=field("Email"),password=field("Пароль"),username=field("Имя пользователя — для регистрации");password.setInputType(129);content.addView(email);content.addView(password);content.addView(username);
         Button login=button("Войти"),register=button("Создать аккаунт");content.addView(login);content.addView(register);
         login.setOnClickListener(v->auth(email.getText().toString(),password.getText().toString(),null));
