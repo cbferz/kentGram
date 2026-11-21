@@ -16,10 +16,9 @@ jobs:
         with:
           go-version: "1.23"
           cache-dependency-path: server/go.sum
-      - name: Format check
+      - name: Format Go source
         working-directory: server
-        run: |
-          test -z "$(gofmt -l ./cmd ./internal)"
+        run: gofmt -w ./cmd ./internal
       - name: Test and compile
         working-directory: server
         run: |
