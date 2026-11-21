@@ -51,7 +51,6 @@ public final class ProfileActivity extends Activity {
         displayName=field("Имя"); bio=field("О себе — до 160 символов"); avatarUrl=field("HTTPS-ссылка на аватар");
         if(own) {
             section("Имя пользователя"); 
-            content.addView(label("@"+prefsUsernameFallback(),15,MUTED,false));
             section("Отображаемое имя");content.addView(displayName);
             section("О себе");content.addView(bio);
             section("Аватар");content.addView(avatarUrl);
@@ -67,7 +66,6 @@ public final class ProfileActivity extends Activity {
         content.addView(label("Подписчики и подписки",13,MUTED,true));
     }
 
-    private String prefsUsernameFallback(){return username==null?"":username;}
     private void load() {
         String path=own?"/me":"/users/"+enc(username);
         call("GET",path,null,result->{
