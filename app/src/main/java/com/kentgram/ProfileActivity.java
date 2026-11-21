@@ -129,7 +129,7 @@ public final class ProfileActivity extends Activity {
                 c.disconnect();
             } catch(Exception e){try{out.put("error","network_error");}catch(Exception ignored){}}
             final JSONObject result=out;final int code=status;
-            runOnUiThread(()->{if(code>=200&&code<300)done.accept(result);else{if(saveButton!=null)saveButton.setEnabled(true);if(followButton!=null)followButton.setEnabled(true);toast(result.optString("error","Ошибка соединения")+" ("+code+")");}});
+            runOnUiThread(()->{if(code>=200&&code<300)done.accept(result);else{if(saveButton!=null)saveButton.setEnabled(true);if(followButton!=null)followButton.setEnabled(true);KentDialog.showMessage(this,"Ошибка профиля",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);}});
         });
     }
 
@@ -140,6 +140,6 @@ public final class ProfileActivity extends Activity {
     private android.graphics.drawable.GradientDrawable round(int color,int radius){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
-    private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
+    private void toast(String s){KentDialog.showToast(this,s);}
     @Override protected void onDestroy(){super.onDestroy();io.shutdown();}
 }
