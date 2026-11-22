@@ -3,27 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#080d15">\n  <meta name="apple-mobile-web-app-capable" content="yes">\n  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#080d15">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="kentGram — общайся. Находи своих. Оставайся на связи.">
   <title>kentGram Web</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
   <main id="auth" class="auth-wrap">
     <section class="auth-card">
-      <div class="brand-mark">k</div>
+      <div class="brand-mark" aria-hidden="true">k</div>
       <p class="eyebrow">MESSENGER</p>
       <h1 id="auth-title">С возвращением</h1>
       <p class="muted" id="auth-subtitle">Войди, чтобы продолжить общение.</p>
       <form id="auth-form" autocomplete="on">
-        <label>Имя пользователя<input id="auth-username" name="username" minlength="3" maxlength="32" autocomplete="username" required></label>
+        <label>Имя пользователя<input id="auth-username" name="username" minlength="3" maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
         <label id="email-field" class="hidden">Электронная почта<input id="auth-email" name="email" type="email" autocomplete="email"></label>
         <label>Пароль<input id="auth-password" name="password" type="password" minlength="10" maxlength="72" autocomplete="current-password" required></label>
         <button class="primary wide" id="auth-submit" type="submit">Войти</button>
       </form>
       <button class="link-button wide" id="auth-toggle" type="button">Создать аккаунт</button>
-      <p class="notice" id="auth-notice" role="status"></p>
+      <p class="notice" id="auth-notice" role="status" aria-live="polite"></p>
     </section>
   </main>
 
@@ -34,7 +39,7 @@
         <button class="icon-button" id="settings-button" aria-label="Настройки" title="Настройки">⚙</button>
       </header>
       <div class="me-line"><div class="avatar" id="my-avatar">K</div><div class="me-copy"><strong id="my-name">Аккаунт</strong><span id="my-handle">@username</span></div><button class="quiet-button" id="logout-button">Выйти</button></div>
-      <div class="search-wrap"><span>⌕</span><input id="people-search" placeholder="Найти человека" autocomplete="off"></div>
+      <div class="search-wrap"><span aria-hidden="true">⌕</span><input id="people-search" placeholder="Найти человека" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Поиск людей"></div>
       <div id="search-results" class="search-results hidden"></div>
       <div class="list-heading"><span>ТВОИ ЧАТЫ</span><button id="refresh-chats" class="quiet-button">Обновить</button></div>
       <nav id="chat-list" class="chat-list" aria-label="Список чатов"></nav>
@@ -47,24 +52,25 @@
         <p>Выбери чат слева или найди человека, чтобы начать разговор.</p>
       </div>
       <header id="chat-header" class="chat-header hidden">
+        <button id="back-to-chats" class="icon-button back-button" type="button" aria-label="Назад к чатам">←</button>
         <div class="avatar" id="chat-avatar">K</div>
         <div class="chat-title"><strong id="chat-title">Чат</strong><span id="chat-subtitle">kentGram</span></div>
-        <button class="icon-button" id="chat-reload" title="Обновить сообщения">↻</button>
+        <button class="icon-button" id="chat-reload" type="button" title="Обновить сообщения" aria-label="Обновить сообщения">↻</button>
       </header>
-      <div id="messages" class="messages hidden" aria-live="polite"></div>
+      <div id="messages" class="messages hidden" aria-live="polite" aria-relevant="additions"></div>
       <form id="composer" class="composer hidden">
-        <label class="attach-button" title="Прикрепить изображение или PDF">＋<input type="file" id="attachment" accept="image/jpeg,image/png,application/pdf" hidden></label>
-        <input id="message-input" maxlength="4000" placeholder="Написать сообщение…" autocomplete="off">
+        <label class="attach-button" title="Прикрепить изображение или PDF" aria-label="Прикрепить файл">＋<input type="file" id="attachment" accept="image/jpeg,image/png,application/pdf" hidden></label>
+        <input id="message-input" maxlength="4000" placeholder="Написать сообщение…" autocomplete="off" aria-label="Текст сообщения">
         <button class="send-button" type="submit" aria-label="Отправить">➤</button>
       </form>
-      <div id="toast" class="toast" role="status"></div>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
     </section>
     <section id="settings-panel" class="settings-panel hidden">
-      <header class="chat-header"><button id="settings-back" class="icon-button">←</button><div class="chat-title"><strong>Настройки</strong><span>Аккаунт и безопасность</span></div></header>
+      <header class="chat-header"><button id="settings-back" class="icon-button" type="button" aria-label="Назад">←</button><div class="chat-title"><strong>Настройки</strong><span>Аккаунт и безопасность</span></div></header>
       <div class="settings-content">
         <h3>Активные сеансы</h3><p class="muted">Устройства, на которых выполнен вход в аккаунт.</p>
         <div id="web-sessions" class="session-list"></div>
-        <button id="revoke-sessions" class="secondary wide">Завершить остальные сеансы</button>
+        <button id="revoke-sessions" class="secondary wide" type="button">Завершить остальные сеансы</button>
       </div>
     </section>
   </main>
