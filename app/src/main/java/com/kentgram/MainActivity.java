@@ -1159,6 +1159,14 @@ public final class MainActivity extends Activity {
                     row.addView(attachment,new LinearLayout.LayoutParams(-1,-2));
                 }
 
+                long forwardedMessageId=m.optLong("forwarded_from_message_id",0);
+                if(forwardedMessageId>0){
+                    String from=m.optString("forwarded_from_username","");
+                    TextView forwarded=label("Переслано от "+(from.isEmpty()?"пользователя":"@"+from),11,0xFF9AB5FF,true);
+                    forwarded.setPadding(dp(5),dp(4),dp(5),dp(1));
+                    row.addView(forwarded);
+                }
+
                 long replyId=m.optLong("reply_to_message_id",0);
                 String quoted=m.optString("reply_to_body","");
                 String quotedSender=m.optString("reply_to_sender_username","");
@@ -1207,7 +1215,9 @@ public final class MainActivity extends Activity {
                             ()->confirmDeleteMessage(id,messageId,messages,history),
                             ()->setReply(messageId,body,m.optString("sender_username","")),
                             ()->showEditMessage(id,messageId,body,messages,history),
-                            emoji->sendMessageReaction(id,messageId,emoji,messages,history));
+                            emoji->sendMessageReaction(id,messageId,emoji,messages,history),
+                            ()->showForwardMessageDialog(id,messageId),
+                            ()->pinMessage(id,messageId));
                     return true;
                 });
                 messages.addView(row);
@@ -1320,6 +1330,46 @@ public final class MainActivity extends Activity {
             if(imm!=null)imm.showSoftInput(input,
                     android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
         },180);
+    }
+
+    private void showForwardMessageDialog(long sourceChatId,long messageId){
+        requestGet("/chats",result->{
+            JSONArray chats=result.optJSONArray("chats");
+            if(chats==null||chats.length()==0){toast("Нет чатов для пересылки");return;}
+            ArrayList<JSONObject> targets=new ArrayList<>();
+            ArrayList<String> labels=new ArrayList<>();
+            for(int i=0;i<chats.length();i++){
+                JSONObject chat=chats.optJSONObject(i);
+                if(chat==null)continue;
+                long chatId=chat.optLong("id");
+                if(chatId==sourceChatId)continue;
+                String kind=chat.optString("kind","direct");
+                String title=chat.optString("title","");
+                if(title.isEmpty())title=chat.optString("peer_display_name","");
+                if(title.isEmpty())title="@"+chat.optString("peer_username","чат");
+                labels.add(("channel".equals(kind)?"📢 ":"group".equals(kind)?"👥 ":"")+title);
+                targets.add(chat);
+            }
+            if(targets.isEmpty()){toast("Нет других чатов");return;}
+            new AlertDialog.Builder(this).setTitle("Переслать в…")
+                    .setItems(labels.toArray(new String[0]),(dialog,index)->{
+                        long destination=targets.get(index).optLong("id");
+                        JSONObject body=new JSONObject();
+                        try{body.put("destination_chat_id",destination);}catch(JSONException ignored){}
+                        request("/chats/"+sourceChatId+"/messages/"+messageId+"/forward",body,true,forwarded->{
+                            toast("Сообщение переслано");
+                            cachedChats=null;
+                        });
+                    }).setNegativeButton("Отмена",null).show();
+        });
+    }
+
+    private void pinMessage(long chatId,long messageId){
+        JSONObject body=new JSONObject();
+        try{body.put("message_id",messageId);}catch(JSONException ignored){}
+        request("/chats/"+chatId+"/pin",body,true,result->{
+            toast("Сообщение закреплено");
+        },(error,status)->toast(status==404?"Недостаточно прав или сообщение недоступно":"Не удалось закрепить"));
     }
 
     private void sendMessageReaction(long chatId,long messageId,String emoji,
