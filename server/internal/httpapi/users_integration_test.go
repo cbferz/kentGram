@@ -106,3 +106,20 @@ func TestProfileUpdate(t *testing.T) {
 		}
 	}
 }
+
+func TestContactsEndpoint(t *testing.T) {
+	h := newTestAPI(t).Routes()
+	alice := registerUser(t, h)
+
+	rec := call(t, h, http.MethodGet, "/api/v1/contacts", alice.Access, nil)
+	expectStatus(t, rec, http.StatusOK)
+	contacts := asMap(t, rec)["contacts"]
+	if contacts == nil {
+		t.Fatal("contacts response must include a contacts array")
+	}
+	if got, ok := contacts.([]any); !ok || len(got) != 0 {
+		t.Fatalf("new account should have an empty contacts array, got: %#v", contacts)
+	}
+
+	expectStatus(t, call(t, h, http.MethodGet, "/api/v1/contacts", "", nil), http.StatusUnauthorized)
+}

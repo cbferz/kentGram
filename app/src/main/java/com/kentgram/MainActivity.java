@@ -30,9 +30,9 @@ public final class MainActivity extends Activity {
 
     private void base(String title){
         root=new LinearLayout(this);root.setOrientation(1);root.setBackgroundColor(BG);
-        top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(18),dp(12),dp(18),dp(12));top.setBackgroundColor(PANEL);
-        TextView h=label(title,21,TEXT,true);top.addView(h,new LinearLayout.LayoutParams(0,-2,1));root.addView(top,new LinearLayout.LayoutParams(-1,-2));
-        ScrollView scroll=new ScrollView(this);content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(14),dp(12),dp(14),dp(12));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(18),dp(12),dp(18),dp(12));top.setBackground(round(PANEL,22));
+        TextView h=label(title,21,TEXT,true);top.addView(h,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams headerParams=new LinearLayout.LayoutParams(-1,-2);headerParams.setMargins(dp(10),dp(8),dp(10),dp(4));root.addView(top,headerParams);
+        ScrollView scroll=new ScrollView(this);content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(16),dp(16),dp(16),dp(16));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         buildNavigation(title);
         setContentView(root);
     }
@@ -142,11 +142,86 @@ public final class MainActivity extends Activity {
     }
 
     private void showAuth(){
-        base("kentGram");if(navBar!=null)root.removeView(navBar);TextView info=label("Общение начинается здесь",16,MUTED,true);info.setPadding(0,dp(18),0,dp(18));content.addView(info);
-        EditText email=field("Email"),password=field("Пароль"),username=field("Имя пользователя — для регистрации");password.setInputType(129);content.addView(email);content.addView(password);content.addView(username);
-        Button login=button("Войти"),register=button("Создать аккаунт");content.addView(login);content.addView(register);
-        login.setOnClickListener(v->auth(email.getText().toString(),password.getText().toString(),null));
-        register.setOnClickListener(v->auth(email.getText().toString(),password.getText().toString(),username.getText().toString()));
+        base("kentGram");
+        if(navBar!=null)root.removeView(navBar);
+        content.setPadding(dp(20),dp(24),dp(20),dp(28));
+
+        LinearLayout hero=new LinearLayout(this);
+        hero.setOrientation(1);
+        hero.setGravity(Gravity.CENTER);
+        hero.setPadding(dp(20),dp(26),dp(20),dp(24));
+        hero.setBackground(round(PANEL,26));
+        TextView mark=label("k",38,0xFF76A7FF,true);
+        mark.setGravity(Gravity.CENTER);
+        mark.setBackground(round(0xFF203A61,28));
+        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(dp(76),dp(76));
+        mp.bottomMargin=dp(16);
+        hero.addView(mark,mp);
+        TextView title=label("Твой круг общения",23,TEXT,true);
+        title.setGravity(Gravity.CENTER);
+        hero.addView(title);
+        TextView subtitle=label("Общайся. Находи своих. Оставайся на связи.",13,MUTED,false);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setPadding(0,dp(8),0,dp(2));
+        hero.addView(subtitle);
+        content.addView(hero);
+
+        LinearLayout form=new LinearLayout(this);
+        form.setOrientation(1);
+        form.setPadding(dp(18),dp(20),dp(18),dp(18));
+        form.setBackground(round(0xFF111925,24));
+        LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,-2);
+        fp.topMargin=dp(16);
+        content.addView(form,fp);
+
+        TextView formTitle=label("Вход в аккаунт",18,TEXT,true);
+        formTitle.setPadding(0,0,0,dp(14));
+        form.addView(formTitle);
+        EditText email=field("Email");
+        EditText password=field("Пароль");
+        password.setInputType(129);
+        EditText username=field("Имя пользователя");
+        username.setVisibility(View.GONE);
+        form.addView(email);
+        form.addView(password);
+        form.addView(username);
+
+        Button primary=button("Войти");
+        Button secondary=button("Создать аккаунт");
+        primary.setTextSize(16);
+        primary.setMinHeight(dp(60));
+        primary.setBackground(round(0xFF2878C7,40));
+        secondary.setTextSize(14);
+        secondary.setMinHeight(dp(48));
+        secondary.setBackground(round(0xFF202A38,40));
+        form.addView(primary);
+        LinearLayout.LayoutParams secondaryParams=(LinearLayout.LayoutParams)secondary.getLayoutParams();
+        if(secondaryParams==null)secondaryParams=new LinearLayout.LayoutParams(-1,-2);
+        secondaryParams.topMargin=dp(4);
+        secondary.setLayoutParams(secondaryParams);
+        form.addView(secondary);
+
+        final boolean[] registering={false};
+        primary.setOnClickListener(v->{
+            String mail=email.getText().toString().trim();
+            String pass=password.getText().toString();
+            if(mail.isEmpty()||pass.isEmpty()){
+                KentDialog.showMessage(this,"Заполни поля","Укажи email и пароль, чтобы продолжить.","Понятно",null);
+                return;
+            }
+            if(registering[0]&&username.getText().toString().trim().isEmpty()){
+                KentDialog.showMessage(this,"Нужно имя пользователя","Придумай username для нового аккаунта.","Понятно",null);
+                return;
+            }
+            auth(mail,pass,registering[0]?username.getText().toString():null);
+        });
+        secondary.setOnClickListener(v->{
+            registering[0]=!registering[0];
+            username.setVisibility(registering[0]?View.VISIBLE:View.GONE);
+            formTitle.setText(registering[0]?"Создание аккаунта":"Вход в аккаунт");
+            primary.setText(registering[0]?"Зарегистрироваться":"Войти");
+            secondary.setText(registering[0]?"Уже есть аккаунт? Войти":"Создать аккаунт");
+        });
     }
     private void auth(String email,String password,String username){
         JSONObject b=new JSONObject();try{b.put("email",email.trim());b.put("password",password);b.put("device_name","kentGram Android");if(username!=null)b.put("username",username.trim());}catch(Exception ignored){}
@@ -184,14 +259,14 @@ public final class MainActivity extends Activity {
     private interface Done{void accept(JSONObject value);}
     private void requestGet(String path,Done done){request(path,null,true,done);}
     private void request(String path,JSONObject body,boolean auth,Done done){
-        io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);String responseText=b.toString("UTF-8");try{out=new JSONObject(responseText);}catch(JSONException parseError){out=new JSONObject();out.put("error",status==404?"endpoint_not_found":status>=500?"server_error":"http_error");}}c.disconnect();}catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{if(code>=200&&code<300)done.accept(result);else if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}else toast(result.optString("error","Ошибка соединения")+" ("+code+")");});});
+        io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);String responseText=b.toString("UTF-8");try{out=new JSONObject(responseText);}catch(JSONException parseError){out=new JSONObject();out.put("error",status==404?"endpoint_not_found":status>=500?"server_error":"http_error");}}c.disconnect();}catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{if(code>=200&&code<300)done.accept(result);else if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}else KentDialog.showMessage(this,code==404?"Маршрут не найден":"Не удалось выполнить запрос",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);});});
     }
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
     private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(13),dp(8),dp(13),dp(8));e.setBackground(round(PANEL,12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
-    private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(TEXT);b.setAllCaps(false);b.setBackground(round(0xFF17649A,12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);b.setLayoutParams(p);return b;}
+    private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(TEXT);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setPadding(dp(18),dp(8),dp(18),dp(8));b.setBackground(round(0xFF17649A,28));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);b.setLayoutParams(p);return b;}
     private TextView label(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);if(bold)t.setTypeface(null,Typeface.BOLD);return t;}
     private android.graphics.drawable.GradientDrawable round(int color,int radius){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
-    private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
+    private void toast(String s){KentDialog.showToast(this,s);}
     @Override protected void onDestroy(){super.onDestroy();io.shutdown();}
 }
