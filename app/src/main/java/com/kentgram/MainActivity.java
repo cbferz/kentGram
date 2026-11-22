@@ -380,7 +380,43 @@ public final class MainActivity extends Activity {
         send.setOnClickListener(v->sendMessage(id,messages,history));composer.setOnEditorActionListener((v,a,e)->{sendMessage(id,messages,history);return true;});refreshMessages(id,messages,history);
     }
     private void refreshMessages(long id,LinearLayout messages,ScrollView history){
-        requestGet("/chats/"+id+"/messages",r->{if(currentChat!=id)return;messages.removeAllViews();JSONArray a=r.optJSONArray("messages");if(a!=null)for(int i=0;i<a.length();i++){JSONObject m=a.optJSONObject(i);if(m==null)continue;boolean mine=m.optBoolean("is_mine");LinearLayout row=new LinearLayout(this);row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);TextView bubble=label(m.optString("body"),15,TEXT,false);bubble.setPadding(dp(13),dp(9),dp(13),dp(9));bubble.setBackground(round(mine?0xFF17466A:0xFF202A38,16));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);p.setMargins(dp(2),dp(4),dp(2),dp(4));row.addView(bubble,p);bubble.setOnLongClickListener(v->{MessageActionMenu.show(this,bubble,m.optString("body"));return true;});messages.addView(row);}history.post(()->history.fullScroll(View.FOCUS_DOWN));});
+        requestGet("/chats/"+id+"/messages",r->{
+            if(currentChat!=id)return;
+            messages.removeAllViews();
+            JSONArray a=r.optJSONArray("messages");
+            if(a!=null)for(int i=0;i<a.length();i++){
+                JSONObject m=a.optJSONObject(i);
+                if(m==null)continue;
+                boolean mine=m.optBoolean("is_mine");
+                long messageId=m.optLong("id",0);
+                String body=m.optString("body","");
+                LinearLayout row=new LinearLayout(this);
+                row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
+                TextView bubble=label(body,15,TEXT,false);
+                bubble.setPadding(dp(13),dp(9),dp(13),dp(9));
+                bubble.setBackground(round(mine?0xFF17466A:0xFF202A38,16));
+                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);
+                p.setMargins(dp(2),dp(4),dp(2),dp(4));
+                row.addView(bubble,p);
+                bubble.setOnLongClickListener(v->{
+                    MessageActionMenu.show(this,bubble,body,mine,
+                            ()->confirmDeleteMessage(id,messageId,messages,history));
+                    return true;
+                });
+                messages.addView(row);
+            }
+            history.post(()->history.fullScroll(View.FOCUS_DOWN));
+        });
+    }
+    private void confirmDeleteMessage(long chatId,long messageId,LinearLayout messages,ScrollView history){
+        if(messageId<=0)return;
+        KentDialog.showMessage(this,"Удалить сообщение?",
+                "Оно будет удалено у всех участников переписки.","Удалить",()->{
+            requestDelete("/chats/"+chatId+"/messages/"+messageId,result->{
+                if(currentChat==chatId)refreshMessages(chatId,messages,history);
+                toast("Сообщение удалено");
+            });
+        });
     }
     private void sendMessage(long id,LinearLayout messages,ScrollView history){
         if(composer==null)return;
@@ -428,6 +464,45 @@ public final class MainActivity extends Activity {
             else KentDialog.showMessage(this,code==404?"Маршрут не найден":"Не удалось выполнить запрос",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
             if(failed!=null)failed.accept(result,code);
         });});
+    }
+    private void requestDelete(String path,Done done){
+        io.execute(()->{
+            JSONObject out=new JSONObject();
+            int status=0;
+            try{
+                HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();
+                c.setRequestMethod("DELETE");
+                c.setConnectTimeout(12000);
+                c.setReadTimeout(12000);
+                c.setRequestProperty("Accept","application/json");
+                if(!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);
+                status=c.getResponseCode();
+                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
+                if(in!=null){
+                    ByteArrayOutputStream b=new ByteArrayOutputStream();
+                    byte[] buf=new byte[4096];
+                    int n;
+                    while((n=in.read(buf))>0)b.write(buf,0,n);
+                    try{out=new JSONObject(b.toString("UTF-8"));}catch(JSONException ignored){}
+                }
+                c.disconnect();
+            }catch(Exception e){
+                try{out.put("error","connection_failed");}catch(Exception ignored){}
+            }
+            final JSONObject result=out;
+            final int code=status;
+            runOnUiThread(()->{
+                if(code>=200&&code<300)done.accept(result);
+                else if(code==401){
+                    prefs.edit().clear().apply();
+                    token="";
+                    showAuth();
+                }else{
+                    KentDialog.showMessage(this,"Не удалось удалить сообщение",
+                            result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
+                }
+            });
+        });
     }
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
     private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(13),dp(8),dp(13),dp(8));e.setBackground(round(PANEL,12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
