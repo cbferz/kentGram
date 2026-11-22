@@ -180,3 +180,33 @@ func (s *Store) ChatMemberIDs(ctx context.Context, chatID int64) ([]int64, error
 	}
 	return ids, rows.Err()
 }
+
+ // MarkChatRead advances the caller's read cursor only within a chat they
+ // currently belong to. A client cannot acknowledge a message from another chat.
+func (s *Store) MarkChatRead(ctx context.Context, chatID, userID, lastReadMessageID int64) (int64, error) {
+	var cursor int64
+	err := s.Pool.QueryRow(ctx, `UPDATE chat_members cm
+		SET last_read_message_id=GREATEST(cm.last_read_message_id,
+			LEAST($3, COALESCE((SELECT max(id) FROM messages WHERE chat_id=$1 AND deleted_at IS NULL),0)))
+		WHERE cm.chat_id=$1 AND cm.user_id=$2
+		RETURNING last_read_message_id`, chatID, userID, lastReadMessageID).Scan(&cursor)
+	return cursor, norm(err)
+}
+
+// ChatReadCursors returns the current read cursor for each member of a chat.
+func (s *Store) ChatReadCursors(ctx context.Context, chatID, viewerID int64) (map[int64]int64, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT cm.user_id,cm.last_read_message_id
+		FROM chat_members cm
+		WHERE cm.chat_id=$1
+		  AND EXISTS(SELECT 1 FROM chat_members viewer WHERE viewer.chat_id=$1 AND viewer.user_id=$2)`,
+		chatID, viewerID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	out := make(map[int64]int64)
+	for rows.Next() {
+		var userID, cursor int64
+		if err := rows.Scan(&userID, &cursor); err != nil { return nil, err }
+		out[userID] = cursor
+	}
+	return out, rows.Err()
+}
