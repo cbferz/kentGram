@@ -106,6 +106,13 @@ func (s *Store) AddCommunityMember(ctx context.Context, chatID, actorID, targetI
 		if !permitted {
 			return ErrNotFound
 		}
+		var targetExists bool
+		if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)`, targetID).Scan(&targetExists); err != nil {
+			return err
+		}
+		if !targetExists {
+			return ErrNotFound
+		}
 		return ErrConflict
 	}
 	return nil
