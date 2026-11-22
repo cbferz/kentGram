@@ -44,6 +44,9 @@ type ChatMessage struct {
 	MediaMime string `json:"media_mime,omitempty"`
 	MediaName string `json:"media_name,omitempty"`
 	MediaSize int64 `json:"media_size,omitempty"`
+	ForwardedFromChatID int64 `json:"forwarded_from_chat_id,omitempty"`
+	ForwardedFromMessageID int64 `json:"forwarded_from_message_id,omitempty"`
+	ForwardedFromUsername string `json:"forwarded_from_username,omitempty"`
 }
 
 func (s *Store) CreateDirectChat(ctx context.Context, me, peer int64) (int64, error) {
@@ -104,7 +107,7 @@ func (s *Store) IsChatMember(ctx context.Context, chatID, userID int64) (bool,er
 func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int64, limit int) ([]ChatMessage,error) {
     if limit < 1 || limit > 100 { limit = 50 }
     rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,''),
-        COALESCE(m.media_id,''),COALESCE(media.content_type,''),COALESCE(media.original_name,''),COALESCE(media.size_bytes,0)
+        COALESCE(m.media_id,''),COALESCE(media.content_type,''),COALESCE(media.original_name,''),COALESCE(media.size_bytes,0),COALESCE(m.forwarded_from_chat_id,0),COALESCE(m.forwarded_from_message_id,0),m.forwarded_from_username
         FROM messages m JOIN users u ON u.id=m.sender_id
         LEFT JOIN messages reply ON reply.id=m.reply_to_message_id AND reply.chat_id=m.chat_id AND reply.deleted_at IS NULL
         LEFT JOIN users reply_user ON reply_user.id=reply.sender_id
@@ -116,7 +119,7 @@ func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int
     out:=[]ChatMessage{}
     for rows.Next() {
         var m ChatMessage
-        if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername,&m.MediaID,&m.MediaMime,&m.MediaName,&m.MediaSize);err!=nil{return nil,err}
+        if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername,&m.MediaID,&m.MediaMime,&m.MediaName,&m.MediaSize,&m.ForwardedFromChatID,&m.ForwardedFromMessageID,&m.ForwardedFromUsername);err!=nil{return nil,err}
         if m.MediaID!="" { m.MediaURL="/chats/"+strconv.FormatInt(m.ChatID,10)+"/media/"+m.MediaID }
         out=append(out,m)
     }
@@ -248,4 +251,67 @@ func (s *Store) ChatIDsForUser(ctx context.Context, userID int64) ([]int64, erro
 		ids = append(ids, chatID)
 	}
 	return ids, rows.Err()
+}
+
+ // ForwardChatMessage copies a visible source message into another chat while
+ // retaining immutable source identifiers and a username snapshot. Both chat
+ // memberships and destination channel posting permissions are checked in SQL.
+func (s *Store) ForwardChatMessage(ctx context.Context, sourceChatID, sourceMessageID, destinationChatID, senderID int64) (ChatMessage, error) {
+	var m ChatMessage
+	err := s.Pool.QueryRow(ctx, `INSERT INTO messages(
+		chat_id,sender_id,body,forwarded_from_chat_id,forwarded_from_message_id,forwarded_from_username
+	)
+	SELECT destination.id,$4,source.body,source.chat_id,source.id,source_user.username
+	FROM chats destination
+	JOIN chat_members destination_member ON destination_member.chat_id=destination.id AND destination_member.user_id=$4
+	JOIN messages source ON source.chat_id=$1 AND source.id=$2 AND source.deleted_at IS NULL
+	JOIN users source_user ON source_user.id=source.sender_id
+	WHERE destination.id=$3
+	  AND EXISTS(SELECT 1 FROM chat_members source_member WHERE source_member.chat_id=$1 AND source_member.user_id=$4)
+	  AND (destination.kind <> 'channel' OR destination_member.role IN ('owner','admin'))
+	RETURNING id,chat_id,sender_id,body,created_at,forwarded_from_chat_id,forwarded_from_message_id,forwarded_from_username`,
+		sourceChatID, sourceMessageID, destinationChatID, senderID,
+	).Scan(&m.ID,&m.ChatID,&m.SenderID,&m.Body,&m.CreatedAt,&m.ForwardedFromChatID,&m.ForwardedFromMessageID,&m.ForwardedFromUsername)
+	if err != nil { return m, norm(err) }
+	m.IsMine = true
+	if err = s.Pool.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, senderID).Scan(&m.SenderUsername); err != nil { return m, err }
+	if _, err = s.Pool.Exec(ctx, `UPDATE chats SET updated_at=NOW() WHERE id=$1`, destinationChatID); err != nil { return m, err }
+	return m, nil
+}
+
+// PinChatMessage pins one message per chat. In community chats only owners and
+// admins may pin; either participant may pin in a direct conversation.
+func (s *Store) PinChatMessage(ctx context.Context, chatID, messageID, actorID int64) error {
+	tag, err := s.Pool.Exec(ctx, `UPDATE chats c SET pinned_message_id=$2,pinned_by=$3
+		WHERE c.id=$1
+		  AND EXISTS(SELECT 1 FROM messages m WHERE m.id=$2 AND m.chat_id=c.id AND m.deleted_at IS NULL)
+		  AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id=c.id AND cm.user_id=$3
+		    AND (c.kind='direct' OR cm.role IN ('owner','admin')))`, chatID, messageID, actorID)
+	if err != nil { return err }
+	if tag.RowsAffected()==0 { return ErrNotFound }
+	return nil
+}
+
+func (s *Store) UnpinChatMessage(ctx context.Context, chatID, actorID int64) error {
+	tag, err := s.Pool.Exec(ctx, `UPDATE chats c SET pinned_message_id=NULL,pinned_by=NULL
+		WHERE c.id=$1 AND c.pinned_message_id IS NOT NULL
+		  AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id=c.id AND cm.user_id=$2
+		    AND (c.kind='direct' OR cm.role IN ('owner','admin')))`, chatID, actorID)
+	if err != nil { return err }
+	if tag.RowsAffected()==0 { return ErrNotFound }
+	return nil
+}
+
+func (s *Store) PinnedChatMessage(ctx context.Context, chatID, viewerID int64) (ChatMessage, error) {
+	var m ChatMessage
+	err := s.Pool.QueryRow(ctx, `SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),
+		m.forwarded_from_chat_id,m.forwarded_from_message_id,m.forwarded_from_username
+		FROM chats c
+		JOIN chat_members cm ON cm.chat_id=c.id AND cm.user_id=$2
+		JOIN messages m ON m.id=c.pinned_message_id AND m.chat_id=c.id AND m.deleted_at IS NULL
+		JOIN users u ON u.id=m.sender_id WHERE c.id=$1`, chatID, viewerID).
+		Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,
+			&m.ForwardedFromChatID,&m.ForwardedFromMessageID,&m.ForwardedFromUsername)
+	if err != nil { return m, norm(err) }
+	return m, nil
 }
