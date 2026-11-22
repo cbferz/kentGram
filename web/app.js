@@ -44,6 +44,7 @@
       username_or_email_taken: "Имя пользователя или почта уже заняты.",
       invalid_registration_data: "Проверь имя пользователя, почту и пароль (не менее 10 символов).",
       too_many_login_attempts: "Слишком много попыток. Попробуй позже.",
+      rate_limit_exceeded: "Слишком много запросов. Подожди минуту и попробуй снова.",
       origin_not_allowed: "Источник запроса не разрешён.",
       invalid_auth_response: "Сервер вернул неполный ответ авторизации.",
       media_request_failed: "Не удалось загрузить вложение.",
@@ -138,6 +139,7 @@
     $("email-field").classList.toggle("hidden", !register);
     $("auth-email").required = register;
     $("auth-password").autocomplete = register ? "new-password" : "current-password";
+    $("auth-password").minLength = register ? 10 : 0;
     $("auth-submit").textContent = register ? "Зарегистрироваться" : "Войти";
     $("auth-toggle").textContent = register ? "Уже есть аккаунт? Войти" : "Создать аккаунт";
     $("auth-notice").textContent = "";
@@ -154,7 +156,7 @@
     try {
       const registering = state.authMode === "register";
       const body = {
-        username: $("auth-username").value.trim(),
+        username: $("auth-username").value.trim().replace(/^@+/, ""),
         password: $("auth-password").value,
         device_name: "kentGram Web"
       };
