@@ -82,6 +82,13 @@ func TestChatMediaUploadAndMembershipScopedDownload(t *testing.T) {
 	forbidden := call(t, handler, http.MethodGet, downloadPath, outsider.Access, nil)
 	expectStatus(t, forbidden, http.StatusNotFound)
 
+	messageID := int64(message["id"].(float64))
+	deleted := call(t, handler, http.MethodDelete,
+		fmt.Sprintf("/api/v1/chats/%d/messages/%d", chatID, messageID), owner.Access, nil)
+	expectStatus(t, deleted, http.StatusOK)
+	deletedMedia := call(t, handler, http.MethodGet, downloadPath, peer.Access, nil)
+	expectStatus(t, deletedMedia, http.StatusNotFound)
+
 	channel := call(t, handler, http.MethodPost, "/api/v1/chats/community", owner.Access,
 		map[string]any{"kind": "channel", "title": "Announcements"})
 	expectStatus(t, channel, http.StatusCreated)
