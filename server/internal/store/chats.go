@@ -129,6 +129,7 @@ func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, sender
     err = s.Pool.QueryRow(ctx, `SELECT EXISTS(
         SELECT 1 FROM messages
         WHERE id = $1 AND chat_id = $2 AND sender_id = $3 AND deleted_at IS NOT NULL
+          AND EXISTS (SELECT 1 FROM chat_members WHERE chat_id = $2 AND user_id = $3)
     )`, messageID, chatID, senderID).Scan(&visible)
     if err != nil {
         return err
