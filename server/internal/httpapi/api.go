@@ -90,6 +90,7 @@ func (a *API) Routes() http.Handler {
 			r.Delete("/chats/{chatID}/pin", a.unpinChatMessage)
 			r.Get("/chats/{chatID}/read", a.getChatReadCursors)
 			r.Post("/chats/{chatID}/read", a.markChatRead)
+			r.Get("/chats/{chatID}/polls", a.listPolls)
 			r.Post("/chats/{chatID}/polls", a.createPoll)
 			r.Get("/chats/{chatID}/polls/{pollID}", a.getPoll)
 			r.Post("/chats/{chatID}/polls/{pollID}/vote", a.votePoll)
