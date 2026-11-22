@@ -17,6 +17,6 @@ ALTER TABLE messages
     ADD CONSTRAINT messages_media_same_chat_fk
     FOREIGN KEY (media_id, chat_id)
     REFERENCES chat_media(media_id, chat_id)
-    ON DELETE RESTRICT;
+    ON DELETE CASCADE;
 
 CREATE INDEX chat_media_chat_idx ON chat_media(chat_id, created_at DESC);
