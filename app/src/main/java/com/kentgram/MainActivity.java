@@ -70,6 +70,9 @@ public final class MainActivity extends Activity {
     private String activePeerUsername="", activePeerAvatarUrl="";
     private JSONArray cachedChats;
     private final HashMap<String,Bitmap> avatarCache=new HashMap<>();
+    private final HashMap<String,Bitmap> mediaCache=new HashMap<>();
+    private final HashMap<String,ArrayList<ImageView>> mediaTargets=new HashMap<>();
+    private final HashSet<String> mediaLoading=new HashSet<>();
     private final HashSet<String> avatarLoading=new HashSet<>();
     private final HashMap<String,ArrayList<ImageView>> avatarTargets=new HashMap<>();
     private boolean onChatScreen=false, onNewChatScreen=false;
@@ -1125,10 +1128,30 @@ public final class MainActivity extends Activity {
                 long messageId=m.optLong("id",0);
                 latestMessageId=Math.max(latestMessageId,messageId);
                 String body=m.optString("body","");
+                String mediaUrl=m.optString("media_url","");
+                String mediaMime=m.optString("media_mime","");
+                String mediaName=m.optString("media_name","");
                 LinearLayout row=new LinearLayout(this);
                 row.setTag(Long.valueOf(messageId));
                 row.setOrientation(1);
                 row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
+
+                if(!mediaUrl.isEmpty()&&mediaMime.startsWith("image/")){
+                    ImageView attachment=new ImageView(this);
+                    attachment.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    attachment.setBackground(round(0xFF202A39,14));
+                    attachment.setClipToOutline(true);
+                    LinearLayout.LayoutParams attachmentParams=new LinearLayout.LayoutParams(dp(236),dp(176));
+                    attachmentParams.setMargins(dp(2),dp(5),dp(2),dp(4));
+                    row.addView(attachment,attachmentParams);
+                    loadChatMedia(attachment,API+mediaUrl);
+                    attachment.setOnClickListener(v->showChatImage(API+mediaUrl));
+                }else if(!mediaUrl.isEmpty()){
+                    TextView attachment=label("📄  "+(mediaName.isEmpty()?body:mediaName)+"\nФайл · "+formatBytes(m.optLong("media_size",0)),13,TEXT,true);
+                    attachment.setPadding(dp(13),dp(12),dp(13),dp(12));
+                    attachment.setBackground(round(PANEL_ALT,13));
+                    row.addView(attachment,new LinearLayout.LayoutParams(-1,-2));
+                }
 
                 long replyId=m.optLong("reply_to_message_id",0);
                 String quoted=m.optString("reply_to_body","");
@@ -1726,6 +1749,54 @@ public final class MainActivity extends Activity {
             });
         });
     }
+    private void loadChatMedia(ImageView target,String url){
+        if(target==null||url==null||url.trim().isEmpty())return;
+        Bitmap cached=mediaCache.get(url);
+        if(cached!=null){target.setImageBitmap(cached);return;}
+        ArrayList<ImageView> waiting=mediaTargets.computeIfAbsent(url,key->new ArrayList<>());
+        waiting.add(target);
+        if(!mediaLoading.add(url))return;
+        io.execute(()->{
+            HttpURLConnection connection=null;
+            Bitmap bitmap=null;
+            try{
+                connection=(HttpURLConnection)new URL(url).openConnection();
+                connection.setConnectTimeout(10000);
+                connection.setReadTimeout(15000);
+                connection.setRequestProperty("Authorization","Bearer "+token);
+                try(InputStream input=connection.getInputStream()){
+                    bitmap=BitmapFactory.decodeStream(input);
+                }
+            }catch(Exception ignored){}
+            finally{if(connection!=null)connection.disconnect();}
+            final Bitmap loaded=bitmap;
+            runOnUiThread(()->{
+                mediaLoading.remove(url);
+                ArrayList<ImageView> targets=mediaTargets.remove(url);
+                if(loaded!=null){
+                    mediaCache.put(url,loaded);
+                    if(targets!=null)for(ImageView view:targets)
+                        if(!isFinishing()&&view.getWindowToken()!=null)view.setImageBitmap(loaded);
+                }
+            });
+        });
+    }
+
+    private void showChatImage(String url){
+        ImageView image=new ImageView(this);
+        image.setAdjustViewBounds(true);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setBackgroundColor(Color.BLACK);
+        loadChatMedia(image,url);
+        new AlertDialog.Builder(this).setView(image).setPositiveButton("Закрыть",null).show();
+    }
+
+    private String formatBytes(long bytes){
+        if(bytes<1024)return bytes+" Б";
+        if(bytes<1024*1024)return String.format(java.util.Locale.ROOT,"%.1f КБ",bytes/1024.0);
+        return String.format(java.util.Locale.ROOT,"%.1f МБ",bytes/(1024.0*1024.0));
+    }
+
     private void loadChatAvatar(ImageView target,String url){
         if(target==null||url==null||url.trim().isEmpty())return;
         Bitmap cached=avatarCache.get(url);
