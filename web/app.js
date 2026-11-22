@@ -90,7 +90,7 @@
   async function loadMessages(chatId) {
     const data=await api("/chats/"+chatId+"/messages");if(!state.chat||state.chat.id!==chatId)return;
     const area=$("messages");area.replaceChildren();for(const m of data.messages||[])area.append(renderMessage(m));area.scrollTop=area.scrollHeight;
-    const latest=(data.messages||[]).at(-1);if(latest)api("/chats/"+chatId+"/read",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({last_read_message_id:latest.id})}).catch(()=>{});
+    const messages=data.messages||[];const latest=messages.length?messages[messages.length-1]:null;if(latest)api("/chats/"+chatId+"/read",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({last_read_message_id:latest.id})}).catch(()=>{});
   }
   async function openChat(id) {
     const chat=state.chats.find(c=>c.id===id);if(!chat)return;state.chat=chat;
