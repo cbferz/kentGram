@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL string
 	JWTSecret   string
 	AvatarDir string
+	MediaDir string
 	PublicBaseURL string
 	// AccessTTL is deliberately short: access tokens are stateless JWTs that
 	// are additionally checked against the session table on every request.
@@ -24,6 +25,7 @@ func Load() Config {
 		DatabaseURL: env("DATABASE_URL", "postgres://kentgram:kentgram_dev_only@localhost:5432/kentgram?sslmode=disable"),
 		JWTSecret:   os.Getenv("JWT_SECRET"),
 		AvatarDir: env("AVATAR_DIR", "./data/avatars"),
+		MediaDir: env("MEDIA_DIR", "./data/media"),
 		PublicBaseURL: env("PUBLIC_BASE_URL", "https://api.kentgram.tendercheck.pro"),
 		AccessTTL:   envDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTTL:  envDuration("REFRESH_TOKEN_TTL", 30*24*time.Hour),
