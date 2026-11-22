@@ -176,3 +176,11 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 	go client.writePump()
 	client.readPump(a, r.Context())
 }
+
+func (a *API) publishChatEvent(ctx context.Context, chatID int64, event realtimeEvent, excludeUserID int64) {
+	members, err := a.db.ChatMemberIDs(ctx, chatID)
+	if err != nil {
+		return
+	}
+	a.hub.publish(members, event, excludeUserID)
+}
