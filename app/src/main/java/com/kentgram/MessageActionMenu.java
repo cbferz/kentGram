@@ -19,7 +19,7 @@ final class MessageActionMenu {
     private MessageActionMenu() {}
 
     static void show(Activity activity, View anchor, String message,
-                     boolean canDelete, Runnable onDelete, Runnable onReply) {
+                     boolean canDelete, Runnable onDelete, Runnable onReply, Runnable onEdit) {
         if (activity == null || anchor == null || message == null) return;
 
         View decor = activity.getWindow().getDecorView();
@@ -41,7 +41,7 @@ final class MessageActionMenu {
         background.setStroke(dp(activity, 1), 0xFF3A4A64);
         menu.setBackground(background);
 
-        PopupWindow popup = new PopupWindow(menu, dp(activity, canDelete ? 300 : 190),
+        PopupWindow popup = new PopupWindow(menu, dp(activity, canDelete ? 370 : 240),
                 dp(activity, 56), true);
         popup.setBackgroundDrawable(background);
         popup.setOutsideTouchable(true);
@@ -62,6 +62,15 @@ final class MessageActionMenu {
         TextView reply = action(activity, "Ответить", 0xFF9AB5FF);
         menu.addView(reply, new LinearLayout.LayoutParams(0, -1, 1));
         reply.setOnClickListener(v -> { popup.dismiss(); if (onReply != null) onReply.run(); });
+
+        if (canDelete) {
+            TextView edit = action(activity, "Изменить", 0xFF9AB5FF);
+            menu.addView(edit, new LinearLayout.LayoutParams(0, -1, 1));
+            edit.setOnClickListener(v -> {
+                popup.dismiss();
+                if (onEdit != null) onEdit.run();
+            });
+        }
 
         if (canDelete) {
             View separator = new View(activity);
