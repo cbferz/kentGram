@@ -162,8 +162,23 @@ func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, sender
 			SELECT cm.storage_name FROM chat_media cm
 			WHERE cm.media_id=m.media_id AND cm.chat_id=m.chat_id
 		),'')`, messageID, chatID, senderID).Scan(&storageName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var alreadyDeleted bool
+		checkErr := s.Pool.QueryRow(ctx, `SELECT EXISTS(
+			SELECT 1 FROM messages
+			WHERE id=$1 AND chat_id=$2 AND sender_id=$3 AND deleted_at IS NOT NULL
+			  AND EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$2 AND user_id=$3)
+		)`, messageID, chatID, senderID).Scan(&alreadyDeleted)
+		if checkErr != nil {
+			return "", checkErr
+		}
+		if alreadyDeleted {
+			return "", nil
+		}
+		return "", ErrNotFound
+	}
 	if err != nil {
-		return "", norm(err)
+		return "", err
 	}
 	return storageName, nil
 }
