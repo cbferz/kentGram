@@ -974,7 +974,7 @@ public final class MainActivity extends Activity {
                         if(isOwner&&action==0){
                             JSONObject body=new JSONObject();
                             try{body.put("role","admin".equals(targetRole)?"member":"admin");}catch(JSONException ignored){}
-                            requestMethod("PATCH","/chats/"+chatId+"/members/"+targetID+"/role",body,true,updated->{
+                            request("/chats/"+chatId+"/members/"+targetID+"/role",body,true,updated->{
                                 toast("Роль обновлена");
                                 loadCommunityMembers(chatId);
                             });
