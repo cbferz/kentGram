@@ -560,11 +560,7 @@ public final class MainActivity extends Activity {
             return;
         }
         final String searchValue=value;
-        search.setEnabled(false);
-        search.setAlpha(.55f);
         requestGet("/users/search?q="+enc(searchValue),r->{
-            search.setEnabled(true);
-            search.setAlpha(1f);
             results.removeAllViews();
             JSONArray users=r.optJSONArray("users");
             if(users==null||users.length()==0){
