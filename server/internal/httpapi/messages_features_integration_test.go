@@ -23,10 +23,10 @@ func TestEditMessageIsOwnerAndChatScoped(t *testing.T) {
     id := int64(asMap(t, sent)["id"].(float64))
     messagePath := path + "/" + strconv.FormatInt(id, 10)
 
-    forbidden := call(t, h, http.MethodPatch, messagePath, bob.Access, map[string]string{"text":"hijack"})
+    forbidden := call(t, h, http.MethodPut, messagePath, bob.Access, map[string]string{"text":"hijack"})
     expectStatus(t, forbidden, http.StatusNotFound)
 
-    edited := call(t, h, http.MethodPatch, messagePath, alice.Access, map[string]string{"text":"after edit"})
+    edited := call(t, h, http.MethodPut, messagePath, alice.Access, map[string]string{"text":"after edit"})
     expectStatus(t, edited, http.StatusOK)
     got := asMap(t, edited)
     if got["body"] != "after edit" { t.Fatalf("edited body = %#v", got["body"]) }
