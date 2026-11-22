@@ -5,7 +5,7 @@ The Android profile editor uploads JPEG and PNG images to `POST /api/v1/me/avata
 - Maximum file size: 5 MiB.
 - Maximum dimensions: 4096 × 4096 pixels and 12 megapixels.
 - Uploads require the current account's Bearer access token.
-- Files are stored in the `kentgram_media` Docker volume at `/data/avatars`.
+- Files are stored in the `kentgram_media` Docker volume at `/data/avatars`. Enable it with `docker compose -f docker-compose.yml -f docker-compose.avatars.yml up -d --build api`.
 - Public URLs use `https://api.kentgram.tendercheck.pro/media/avatars/{opaque-id}.{jpg|png}`.
 - Public files are immutable and cached for one year. A new upload creates a new URL; existing URLs remain valid.
 
