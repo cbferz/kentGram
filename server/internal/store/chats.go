@@ -4,6 +4,7 @@ import (
     "context"
     "errors"
     "time"
+    "strconv"
 
     "github.com/jackc/pgx/v5"
 )
@@ -38,6 +39,11 @@ type ChatMessage struct {
 	ReplyToMessageID *int64 `json:"reply_to_message_id,omitempty"`
 	ReplyToBody string `json:"reply_to_body,omitempty"`
 	ReplyToSenderUsername string `json:"reply_to_sender_username,omitempty"`
+	MediaID string `json:"media_id,omitempty"`
+	MediaURL string `json:"media_url,omitempty"`
+	MediaMime string `json:"media_mime,omitempty"`
+	MediaName string `json:"media_name,omitempty"`
+	MediaSize int64 `json:"media_size,omitempty"`
 }
 
 func (s *Store) CreateDirectChat(ctx context.Context, me, peer int64) (int64, error) {
@@ -97,10 +103,12 @@ func (s *Store) IsChatMember(ctx context.Context, chatID, userID int64) (bool,er
 
 func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int64, limit int) ([]ChatMessage,error) {
     if limit < 1 || limit > 100 { limit = 50 }
-    rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,'')
+    rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,''),
+        COALESCE(m.media_id,''),COALESCE(media.content_type,''),COALESCE(media.original_name,''),COALESCE(media.size_bytes,0)
         FROM messages m JOIN users u ON u.id=m.sender_id
         LEFT JOIN messages reply ON reply.id=m.reply_to_message_id AND reply.chat_id=m.chat_id AND reply.deleted_at IS NULL
         LEFT JOIN users reply_user ON reply_user.id=reply.sender_id
+        LEFT JOIN chat_media media ON media.media_id=m.media_id AND media.chat_id=m.chat_id
         WHERE m.chat_id=$1 AND m.deleted_at IS NULL AND ($3=0 OR m.id<$3)
         ORDER BY m.id DESC LIMIT $4`,chatID,viewerID,beforeID,limit)
     if err != nil { return nil,err }
@@ -108,7 +116,8 @@ func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int
     out:=[]ChatMessage{}
     for rows.Next() {
         var m ChatMessage
-        if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername);err!=nil{return nil,err}
+        if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername,&m.MediaID,&m.MediaMime,&m.MediaName,&m.MediaSize);err!=nil{return nil,err}
+        if m.MediaID!="" { m.MediaURL="/api/v1/chats/"+strconv.FormatInt(m.ChatID,10)+"/media/"+m.MediaID }
         out=append(out,m)
     }
     for i,j:=0,len(out)-1;i<j;i,j=i+1,j-1 { out[i],out[j]=out[j],out[i] }
