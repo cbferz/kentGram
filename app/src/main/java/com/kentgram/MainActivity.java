@@ -56,7 +56,8 @@ public final class MainActivity extends Activity {
     private LinearLayout replyPreview;
     private long replyToMessageId=0;
     private String replyToBody="", replyToSender="";
-    private long currentChat=0, activePeerID=0, activePeerReadCursor=0;
+    private volatile long currentChat=0;
+    private long activePeerID=0, activePeerReadCursor=0;
     private static final int REQUEST_PICK_CHAT_MEDIA=4101;
     private long pendingMediaChatId=0;
     private String pendingMediaCaption="";
