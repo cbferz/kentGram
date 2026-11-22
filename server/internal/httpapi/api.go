@@ -61,6 +61,12 @@ func (a *API) Routes() http.Handler {
 
 			r.Get("/chats", a.listChats)
 			r.Post("/chats/direct", a.createDirectChat)
+			r.Post("/chats/community", a.createCommunityChat)
+			r.Get("/chats/{chatID}", a.getCommunityChat)
+			r.Get("/chats/{chatID}/members", a.listCommunityMembers)
+			r.Post("/chats/{chatID}/members", a.addCommunityMember)
+			r.Patch("/chats/{chatID}/members/{userID}/role", a.setCommunityMemberRole)
+			r.Post("/chats/{chatID}/leave", a.leaveCommunityChat)
 			r.Get("/chats/{chatID}/messages", a.listChatMessages)
 			r.Post("/chats/{chatID}/messages", a.sendChatMessage)
 			r.Delete("/chats/{chatID}/messages/{messageID}", a.deleteChatMessage)
