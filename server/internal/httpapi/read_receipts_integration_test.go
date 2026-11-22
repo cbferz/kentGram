@@ -27,6 +27,16 @@ func TestChatReadCursorIsScopedAndMonotonic(t *testing.T) {
 	expectStatus(t, second, http.StatusCreated)
 	secondID := int64(asMap(t, second)["id"].(float64))
 
+	// Fetching history must not mark it read; only an explicit acknowledgement does.
+	loaded := call(t, h, http.MethodGet, fmt.Sprintf("/api/v1/chats/%d/messages", chatID), peer.Access, nil)
+	expectStatus(t, loaded, http.StatusOK)
+	beforeAck := call(t, h, http.MethodGet, fmt.Sprintf("/api/v1/chats/%d/read", chatID), owner.Access, nil)
+	expectStatus(t, beforeAck, http.StatusOK)
+	beforeCursors, ok := asMap(t, beforeAck)["read_cursors"].(map[string]any)
+	if !ok || beforeCursors[fmt.Sprint(peer.ID)].(float64) != 0 {
+		t.Fatal("loading messages unexpectedly advanced the read cursor")
+	}
+
 	marked := call(t, h, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/read", chatID), peer.Access,
 		map[string]int64{"last_read_message_id": secondID})
 	expectStatus(t, marked, http.StatusOK)
