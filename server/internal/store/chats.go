@@ -122,6 +122,12 @@ func (s *Store) SendChatMessage(ctx context.Context, chatID,senderID int64,body 
     err:=s.Pool.QueryRow(ctx,`INSERT INTO messages(chat_id,sender_id,body,reply_to_message_id)
         SELECT $1,$2,$3,CASE WHEN $4=0 THEN NULL ELSE $4 END
         WHERE EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2)
+          AND EXISTS(SELECT 1 FROM chats c WHERE c.id=$1 AND
+              (c.kind <> 'channel' OR EXISTS(
+                  SELECT 1 FROM chat_members permission
+                  WHERE permission.chat_id=c.id AND permission.user_id=$2
+                    AND permission.role IN ('owner','admin')
+              )))
           AND ($4=0 OR EXISTS(SELECT 1 FROM messages WHERE id=$4 AND chat_id=$1 AND deleted_at IS NULL))
         RETURNING id,chat_id,sender_id,body,created_at`,chatID,senderID,body,replyToID).
         Scan(&m.ID,&m.ChatID,&m.SenderID,&m.Body,&m.CreatedAt)
