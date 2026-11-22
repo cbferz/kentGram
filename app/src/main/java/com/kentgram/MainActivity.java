@@ -228,20 +228,142 @@ public final class MainActivity extends Activity {
         request(username==null?"/auth/login":"/auth/register",b,false,r->{token=r.optString("access_token","");if(token.isEmpty()){toast("Сервер не вернул токен");return;}prefs.edit().putString("access_token",token).putString("refresh_token",r.optString("refresh_token","")).apply();showChats();});
     }
     private void showChats(){
-        currentChat=0;base("kentGram");Button profile=button("Мой профиль");content.addView(profile);profile.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));Button find=button("＋  Новая переписка");content.addView(find);find.setOnClickListener(v->showUserSearch());
-        TextView caption=label("Сообщения",14,MUTED,true);caption.setPadding(0,dp(16),0,dp(8));content.addView(caption);loadChats();
-        Button logout=button("Выйти");content.addView(logout);logout.setOnClickListener(v->{request("/auth/logout",new JSONObject(),true,r->{});prefs.edit().clear().apply();token="";showAuth();});
+        currentChat=0;
+        base("kentGram");
+
+        TextView searchTitle=label("Поиск людей",16,TEXT,true);
+        content.addView(searchTitle);
+        EditText query=field("Имя или @username");
+        content.addView(query);
+        Button search=button("Найти");
+        content.addView(search);
+
+        LinearLayout results=new LinearLayout(this);
+        results.setOrientation(1);
+        content.addView(results);
+
+        TextView caption=label("Мои переписки",16,TEXT,true);
+        caption.setPadding(0,dp(14),0,dp(9));
+        content.addView(caption);
+        LinearLayout chatsList=new LinearLayout(this);
+        chatsList.setOrientation(1);
+        content.addView(chatsList);
+        loadChats(chatsList);
+
+        search.setOnClickListener(v->searchUsers(query,search,results));
+        query.setOnEditorActionListener((v,action,event)->{
+            searchUsers(query,search,results);
+            return true;
+        });
+
+        // Floating action button sits above the bottom navigation.
+        LinearLayout fabBar=new LinearLayout(this);
+        fabBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        fabBar.setPadding(dp(16),dp(2),dp(18),dp(10));
+        TextView fab=label("+",30,Color.WHITE,true);
+        fab.setGravity(Gravity.CENTER);
+        fab.setBackground(round(0xFF2878C7,50));
+        fab.setElevation(dp(7));
+        fab.setContentDescription("Новая переписка");
+        fab.setOnClickListener(v->showUserSearch());
+        fabBar.addView(fab,new LinearLayout.LayoutParams(dp(58),dp(58)));
+        int navIndex=root.indexOfChild(navBar);
+        root.addView(fabBar,navIndex<0?root.getChildCount():navIndex,
+                new LinearLayout.LayoutParams(-1,-2));
     }
-    private void loadChats(){
-        requestGet("/chats",r->{if(content.getChildCount()>2)content.removeViews(2,content.getChildCount()-2);JSONArray a=r.optJSONArray("chats");
-            if(a==null||a.length()==0){content.addView(label("Пока нет переписок. Нажми «Новая переписка», чтобы найти пользователя.",15,MUTED,false));return;}
-            for(int i=0;i<a.length();i++){JSONObject c=a.optJSONObject(i);if(c==null)continue;long id=c.optLong("id");String name=c.optString("peer_display_name");if(name.isEmpty())name="@"+c.optString("peer_username");String last=c.optString("last_message","Начните общение");
-                final long chatId=id;final String peerName=name;LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(14),dp(12),dp(14),dp(12));card.setBackground(round(PANEL,14));TextView title=label(peerName,16,TEXT,true);TextView preview=label(last.isEmpty()?"Нет сообщений":last,14,MUTED,false);card.addView(title);card.addView(preview);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(8);content.addView(card,lp);card.setOnClickListener(v->openChat(chatId,peerName));}
+
+    private void loadChats(LinearLayout chatsList){
+        requestGet("/chats",r->{
+            chatsList.removeAllViews();
+            JSONArray a=r.optJSONArray("chats");
+            if(a==null||a.length()==0){
+                chatsList.addView(label("Пока нет переписок. Начни новую через кнопку +.",14,MUTED,false));
+                return;
+            }
+            for(int i=0;i<a.length();i++){
+                JSONObject c=a.optJSONObject(i);
+                if(c==null)continue;
+                long id=c.optLong("id");
+                String name=c.optString("peer_display_name");
+                if(name.isEmpty())name="@"+c.optString("peer_username");
+                String last=c.optString("last_message","Начните общение");
+                final long chatId=id;
+                final String peerName=name;
+                LinearLayout card=new LinearLayout(this);
+                card.setOrientation(1);
+                card.setPadding(dp(14),dp(12),dp(14),dp(12));
+                card.setBackground(round(PANEL,16));
+                card.addView(label(peerName,16,TEXT,true));
+                card.addView(label(last.isEmpty()?"Нет сообщений":last,14,MUTED,false));
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+                lp.bottomMargin=dp(8);
+                chatsList.addView(card,lp);
+                card.setOnClickListener(v->openChat(chatId,peerName));
+            }
         });
     }
+
+    private void searchUsers(EditText query,Button search,LinearLayout results){
+        String value=query.getText().toString().trim();
+        if(value.startsWith("@"))value=value.substring(1).trim();
+        if(value.length()<2){
+            toast("Введите минимум 2 символа");
+            return;
+        }
+        final String searchValue=value;
+        search.setEnabled(false);
+        requestGet("/users/search?q="+enc(searchValue),r->{
+            search.setEnabled(true);
+            results.removeAllViews();
+            JSONArray users=r.optJSONArray("users");
+            if(users==null||users.length()==0){
+                results.addView(label("Пользователи не найдены",14,MUTED,false));
+                return;
+            }
+            for(int i=0;i<users.length();i++){
+                JSONObject u=users.optJSONObject(i);
+                if(u==null)continue;
+                long uid=u.optLong("id");
+                String username=u.optString("username");
+                String displayName=u.optString("display_name");
+                String title=displayName.isEmpty()?"@"+username:displayName;
+                LinearLayout card=new LinearLayout(this);
+                card.setOrientation(1);
+                card.setPadding(dp(13),dp(10),dp(13),dp(10));
+                card.setBackground(round(PANEL,14));
+                card.addView(label(title,15,TEXT,true));
+                card.addView(label("@"+username,12,MUTED,false));
+                Button message=button("Написать");
+                card.addView(message);
+                message.setOnClickListener(v->{
+                    JSONObject body=new JSONObject();
+                    try{body.put("user_id",uid);}catch(Exception ignored){}
+                    request("/chats/direct",body,true,created->{
+                        String peer=displayName.isEmpty()?"@"+username:displayName;
+                        openChat(created.optLong("chat_id"),peer);
+                    });
+                });
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+                lp.bottomMargin=dp(8);
+                results.addView(card,lp);
+            }
+        });
+    }
+
     private void showUserSearch(){
-        base("Новая переписка");EditText q=field("Имя пользователя");content.addView(q);Button search=button("Найти");content.addView(search);
-        search.setOnClickListener(v->{String value=q.getText().toString().trim();if(value.length()<2){toast("Введите минимум 2 символа");return;}requestGet("/users/search?q="+enc(value),r->{if(content.getChildCount()>2)content.removeViews(2,content.getChildCount()-2);JSONArray a=r.optJSONArray("users");if(a==null||a.length()==0){content.addView(label("Пользователи не найдены",14,MUTED,false));return;}for(int i=0;i<a.length();i++){JSONObject u=a.optJSONObject(i);if(u==null)continue;long uid=u.optLong("id");String name=u.optString("display_name");String handle="@"+u.optString("username");LinearLayout row=new LinearLayout(this);row.setOrientation(1);row.setPadding(dp(10),dp(8),dp(10),dp(8));row.setBackground(round(PANEL,12));TextView caption=label((name.isEmpty()?handle:name+"  "+handle),15,TEXT,true);row.addView(caption);Button profile=button("Открыть профиль");row.addView(profile);profile.setOnClickListener(x->{Intent intent=new Intent(this,ProfileActivity.class);intent.putExtra("username",u.optString("username"));startActivity(intent);});Button message=button("Написать");row.addView(message);message.setOnClickListener(x->{JSONObject body=new JSONObject();try{body.put("user_id",uid);}catch(Exception ignored){}request("/chats/direct",body,true,created->openChat(created.optLong("chat_id"),name.isEmpty()?handle:name));});content.addView(row);}});});
+        base("Новая переписка");
+        EditText q=field("Имя или @username");
+        content.addView(q);
+        Button search=button("Найти");
+        content.addView(search);
+        LinearLayout results=new LinearLayout(this);
+        results.setOrientation(1);
+        content.addView(results);
+        search.setOnClickListener(v->searchUsers(q,search,results));
+        q.setOnEditorActionListener((v,action,event)->{
+            searchUsers(q,search,results);
+            return true;
+        });
     }
     private void openChat(long id,String peer){
         currentChat=id;base(peer);
