@@ -59,6 +59,7 @@ public final class MainActivity extends Activity {
     private long currentChat=0, activePeerID=0, activePeerReadCursor=0;
     private static final int REQUEST_PICK_CHAT_MEDIA=4101;
     private long pendingMediaChatId=0;
+    private String pendingMediaCaption="";
     private LinearLayout pendingMediaMessages;
     private ScrollView pendingMediaHistory;
     private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
@@ -915,6 +916,7 @@ public final class MainActivity extends Activity {
         bar.addView(attach,new LinearLayout.LayoutParams(dp(40),dp(44)));
         attach.setOnClickListener(v->{
             pendingMediaChatId=id;
+            pendingMediaCaption=composer.getText().toString().trim();
             pendingMediaMessages=messages;
             pendingMediaHistory=history;
             Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -1558,10 +1560,10 @@ public final class MainActivity extends Activity {
         if(requestCode!=REQUEST_PICK_CHAT_MEDIA||resultCode!=RESULT_OK||data==null)return;
         Uri uri=data.getData();
         if(uri==null||pendingMediaChatId<=0)return;
-        uploadChatMedia(pendingMediaChatId,uri,pendingMediaMessages,pendingMediaHistory);
+        uploadChatMedia(pendingMediaChatId,uri,pendingMediaCaption,pendingMediaMessages,pendingMediaHistory);
     }
 
-    private void uploadChatMedia(long chatId,Uri uri,LinearLayout messages,ScrollView history){
+    private void uploadChatMedia(long chatId,Uri uri,String caption,LinearLayout messages,ScrollView history){
         io.execute(()->{
             HttpURLConnection connection=null;
             int status=0;
@@ -1581,7 +1583,7 @@ public final class MainActivity extends Activity {
                 connection.setRequestProperty("Accept","application/json");
                 connection.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
                 try(OutputStream output=connection.getOutputStream()){
-                    writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n\r\n");
+                    writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n"+caption+"\r\n");
                     String safeName=fileName.replace("\\","_").replace("\"","_").replace("\r","").replace("\n","");
                     writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\""+safeName+"\"\r\nContent-Type: "+contentType+"\r\n\r\n");
                     try(InputStream input=getContentResolver().openInputStream(uri)){
@@ -1612,11 +1614,14 @@ public final class MainActivity extends Activity {
             runOnUiThread(()->{
                 if(resultCode>=200&&resultCode<300){
                     if(currentChat==chatId&&messages!=null&&history!=null)refreshMessages(chatId,messages,history);
+                    if(currentChat==chatId&&composer!=null&&composer.getText().toString().trim().equals(caption))
+                        composer.setText("");
                     toast("Файл отправлен");
                 }else{
                     toast(result.optString("error","Не удалось отправить файл")+" ("+resultCode+")");
                 }
                 pendingMediaChatId=0;
+                pendingMediaCaption="";
                 pendingMediaMessages=null;
                 pendingMediaHistory=null;
             });
