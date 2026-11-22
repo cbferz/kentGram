@@ -550,12 +550,6 @@ public final class MainActivity extends Activity {
         descriptionInput.setSingleLine(false);
         descriptionInput.setMinLines(2);
         form.addView(descriptionInput,new LinearLayout.LayoutParams(-1,dp(76)));
-        new AlertDialog.Builder(this)
-                .setTitle("Новое сообщество")
-                .setView(form)
-                .setNegativeButton("Отмена",null)
-                .setPositiveButton("Создать",null)
-                .create();
         AlertDialog dialog=new AlertDialog.Builder(this)
                 .setTitle("Новое сообщество")
                 .setView(form)
