@@ -9,4 +9,4 @@ The Android profile editor uploads JPEG and PNG images to `POST /api/v1/me/avata
 - Public URLs use `https://api.kentgram.tendercheck.pro/media/avatars/{opaque-id}.{jpg|png}`.
 - Public files are immutable and cached for one year. A new upload creates a new URL; existing URLs remain valid.
 
-The database schema is unchanged. Only the current user's `avatar_url` profile field is updated after the file is safely written.
+The database schema is unchanged. The API's existing username-login flow is included in the stacked change set. Only the current user's `avatar_url` profile field is updated after the file is safely written.
