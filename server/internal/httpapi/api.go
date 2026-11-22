@@ -63,7 +63,7 @@ func (a *API) Routes() http.Handler {
 			r.Post("/chats/direct", a.createDirectChat)
 			r.Get("/chats/{chatID}/messages", a.listChatMessages)
 			r.Post("/chats/{chatID}/messages", a.sendChatMessage)
-			r.Patch("/chats/{chatID}/messages/{messageID}", a.editChatMessage)
+			r.Put("/chats/{chatID}/messages/{messageID}", a.editChatMessage)
 			r.Post("/chats/{chatID}/messages/{messageID}/reactions", a.toggleMessageReaction)
 			r.Delete("/chats/{chatID}/messages/{messageID}", a.deleteChatMessage)
 
