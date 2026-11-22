@@ -2,6 +2,7 @@ package store
 
 import (
     "context"
+    "encoding/json"
     "errors"
     "time"
 
@@ -21,6 +22,12 @@ type ChatSummary struct {
     CreatedAt time.Time `json:"created_at"`
 }
 
+type MessageReaction struct {
+    Emoji string `json:"emoji"`
+    Count int64 `json:"count"`
+    Mine bool `json:"mine"`
+}
+
 type ChatMessage struct {
     ID int64 `json:"id"`
     ChatID int64 `json:"chat_id"`
@@ -28,7 +35,10 @@ type ChatMessage struct {
     SenderUsername string `json:"sender_username"`
     Body string `json:"body"`
     CreatedAt time.Time `json:"created_at"`
+    EditedAt *time.Time `json:"edited_at,omitempty"`
     IsMine bool `json:"is_mine"`
+    IsRead bool `json:"is_read"`
+    Reactions []MessageReaction `json:"reactions"`
 	ReplyToMessageID *int64 `json:"reply_to_message_id,omitempty"`
 	ReplyToBody string `json:"reply_to_body,omitempty"`
 	ReplyToSenderUsername string `json:"reply_to_sender_username,omitempty"`
@@ -84,10 +94,22 @@ func (s *Store) IsChatMember(ctx context.Context, chatID, userID int64) (bool,er
 
 func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int64, limit int) ([]ChatMessage,error) {
     if limit < 1 || limit > 100 { limit = 50 }
-    rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,'')
+    rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),
+        m.edited_at,
+        EXISTS(SELECT 1 FROM chat_members peer_read WHERE peer_read.chat_id=m.chat_id
+            AND peer_read.user_id<>$2 AND peer_read.last_read_message_id>=m.id),
+        COALESCE(reaction_summary.reactions,'[]'::jsonb),
+        m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,'')
         FROM messages m JOIN users u ON u.id=m.sender_id
         LEFT JOIN messages reply ON reply.id=m.reply_to_message_id AND reply.chat_id=m.chat_id AND reply.deleted_at IS NULL
         LEFT JOIN users reply_user ON reply_user.id=reply.sender_id
+        LEFT JOIN LATERAL (
+            SELECT jsonb_agg(jsonb_build_object('emoji', grouped.emoji, 'count', grouped.total, 'mine', grouped.mine)) AS reactions
+            FROM (
+                SELECT emoji, COUNT(*) AS total, BOOL_OR(user_id=$2) AS mine
+                FROM message_reactions WHERE message_id=m.id AND chat_id=m.chat_id GROUP BY emoji
+            ) grouped
+        ) reaction_summary ON TRUE
         WHERE m.chat_id=$1 AND m.deleted_at IS NULL AND ($3=0 OR m.id<$3)
         ORDER BY m.id DESC LIMIT $4`,chatID,viewerID,beforeID,limit)
     if err != nil { return nil,err }
@@ -95,7 +117,11 @@ func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int
     out:=[]ChatMessage{}
     for rows.Next() {
         var m ChatMessage
-        if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername);err!=nil{return nil,err}
+        var reactionsJSON []byte
+        if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,
+            &m.EditedAt,&m.IsRead,&reactionsJSON,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername);err!=nil{return nil,err}
+        m.Reactions=[]MessageReaction{}
+        if len(reactionsJSON)>0 { if err:=json.Unmarshal(reactionsJSON,&m.Reactions);err!=nil{return nil,err} }
         out=append(out,m)
     }
     for i,j:=0,len(out)-1;i<j;i,j=i+1,j-1 { out[i],out[j]=out[j],out[i] }
@@ -146,3 +172,49 @@ func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, sender
     }
     return nil
 }
+
+// EditChatMessage permits only the original sender to edit a visible message in a chat they belong to.
+func (s *Store) EditChatMessage(ctx context.Context, chatID, messageID, senderID int64, body string) (ChatMessage, error) {
+    var m ChatMessage
+    err := s.Pool.QueryRow(ctx, `UPDATE messages m
+        SET body=$4, edited_at=NOW()
+        FROM chat_members member
+        WHERE m.id=$1 AND m.chat_id=$2 AND m.sender_id=$3
+          AND member.chat_id=$2 AND member.user_id=$3
+          AND m.deleted_at IS NULL
+        RETURNING m.id,m.chat_id,m.sender_id,m.body,m.created_at,m.edited_at`,
+        messageID, chatID, senderID, body).Scan(
+        &m.ID,&m.ChatID,&m.SenderID,&m.Body,&m.CreatedAt,&m.EditedAt)
+    if err != nil { return m, norm(err) }
+    m.IsMine = true
+    if err := s.Pool.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, senderID).Scan(&m.SenderUsername); err != nil {
+        return m, err
+    }
+    return m, nil
+}
+
+// ToggleMessageReaction toggles one user's reaction. Message and chat are always scoped together.
+func (s *Store) ToggleMessageReaction(ctx context.Context, chatID, messageID, userID int64, emoji string) error {
+    tx, err := s.Pool.Begin(ctx)
+    if err != nil { return err }
+    defer tx.Rollback(ctx)
+    var exists bool
+    if err := tx.QueryRow(ctx, `SELECT EXISTS(
+        SELECT 1 FROM messages m
+        JOIN chat_members cm ON cm.chat_id=m.chat_id AND cm.user_id=$3
+        WHERE m.id=$1 AND m.chat_id=$2 AND m.deleted_at IS NULL
+    )`, messageID, chatID, userID).Scan(&exists); err != nil { return err }
+    if !exists { return ErrNotFound }
+    tag, err := tx.Exec(ctx, `DELETE FROM message_reactions
+        WHERE message_id=$1 AND chat_id=$2 AND user_id=$3 AND emoji=$4`,
+        messageID, chatID, userID, emoji)
+    if err != nil { return err }
+    if tag.RowsAffected() == 0 {
+        if _, err := tx.Exec(ctx, `INSERT INTO message_reactions(message_id,chat_id,user_id,emoji)
+            VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, messageID, chatID, userID, emoji); err != nil {
+            return err
+        }
+    }
+    return tx.Commit(ctx)
+}
+
