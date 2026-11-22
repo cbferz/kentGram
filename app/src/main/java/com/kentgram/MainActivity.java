@@ -21,6 +21,12 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,6 +36,15 @@ public final class MainActivity extends Activity {
     private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
     private static final int BG=0xFF090B10,PANEL=0xFF121720,TEXT=0xFFF4F6FA,MUTED=0xFF8994A6,ACCENT=0xFF648DFF,PANEL_ALT=0xFF1A2230;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
+    private OkHttpClient realtimeHttp;
+    private WebSocket realtimeSocket;
+    private boolean realtimeConnecting=false, realtimeReconnectScheduled=false;
+    private Runnable realtimeReconnectTask;
+    private LinearLayout activeMessages, activeChatsList;
+    private ScrollView activeHistory;
+    private TextView activeChatStatus;
+    private String activeChatSubtitle="";
+    private long lastTypingSentAt=0;
     private SharedPreferences prefs;
     private String token="";
     private LinearLayout root,content,top,navBar;
@@ -54,6 +69,10 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
 
     private void base(String title){
+        activeChatsList=null;
+        activeMessages=null;
+        activeHistory=null;
+        activeChatStatus=null;
         root=new LinearLayout(this);
         root.setOrientation(1);
         root.setFocusableInTouchMode(true);
@@ -335,11 +354,13 @@ public final class MainActivity extends Activity {
             request("/auth/logout",new JSONObject(),true,r->{});
             prefs.edit().clear().apply();
             token="";
+            stopRealtime();
             showAuth();
         }));
     }
 
     private void showAuth(){
+        stopRealtime();
         base("kentGram");
         if(navBar!=null)root.removeView(navBar);
         content.setPadding(dp(20),dp(24),dp(20),dp(28));
@@ -448,6 +469,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void showChats(){
+        ensureRealtimeConnected();
         onChatScreen=false;onNewChatScreen=false;
         activePeerUsername="";activePeerAvatarUrl="";
         currentChat=0;
@@ -500,6 +522,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams clp=new LinearLayout.LayoutParams(-1,-2);
         clp.topMargin=dp(10);
         content.addView(chatsList,clp);
+        activeChatsList=chatsList;
         loadChats(chatsList);
 
         searchRow.setOnClickListener(v->{query.requestFocus();});
@@ -818,7 +841,9 @@ public final class MainActivity extends Activity {
         String chatSubtitle="direct".equals(chatKind)?
                 (activePeerUsername.isEmpty()?"переписка":"@"+activePeerUsername):
                 ("channel".equals(chatKind)?"канал":"группа");
-        peerBlock.addView(label(chatSubtitle,11,MUTED,false));
+        activeChatSubtitle=chatSubtitle;
+        activeChatStatus=label(chatSubtitle,11,MUTED,false);
+        peerBlock.addView(activeChatStatus);
         top.addView(peerBlock,new LinearLayout.LayoutParams(0,-2,1));
         View.OnClickListener openPeer=v->{
             if(!activePeerUsername.isEmpty()){
@@ -839,6 +864,8 @@ public final class MainActivity extends Activity {
         messages.setPadding(dp(12),dp(8),dp(12),dp(14));
         history.addView(messages);
         root.addView(history,new LinearLayout.LayoutParams(-1,0,1));
+        activeMessages=messages;
+        activeHistory=history;
 
         LinearLayout composerBox=new LinearLayout(this);
         composerBox.setOrientation(1);
@@ -882,6 +909,19 @@ public final class MainActivity extends Activity {
         composer.setOnEditorActionListener((v,a,e)->{
             sendMessage(id,messages,history);
             return true;
+        });
+        composer.addTextChangedListener(new android.text.TextWatcher(){
+            @Override public void beforeTextChanged(CharSequence value,int start,int count,int after){}
+            @Override public void onTextChanged(CharSequence value,int start,int before,int count){
+                if(value.length()>0){
+                    long now=System.currentTimeMillis();
+                    if(now-lastTypingSentAt>1500){
+                        lastTypingSentAt=now;
+                        sendRealtimeTyping(id);
+                    }
+                }
+            }
+            @Override public void afterTextChanged(android.text.Editable value){}
         });
         refreshMessages(id,messages,history);
         if(!"direct".equals(chatKind)){
@@ -1311,6 +1351,117 @@ public final class MainActivity extends Activity {
                 if(currentChat==id&&composer!=null&&composer.getText().length()==0)composer.setText(text);
             });
     }
+    private void ensureRealtimeConnected(){
+        if(token.isEmpty()||realtimeSocket!=null||realtimeConnecting)return;
+        realtimeConnecting=true;
+        if(realtimeHttp==null){
+            realtimeHttp=new OkHttpClient.Builder()
+                    .readTimeout(0,TimeUnit.MILLISECONDS)
+                    .pingInterval(25,TimeUnit.SECONDS)
+                    .build();
+        }
+        Request request=new Request.Builder()
+                .url(API.replace("https://","wss://")+"/realtime")
+                .header("Authorization","Bearer "+token)
+                .build();
+        realtimeSocket=realtimeHttp.newWebSocket(request,new WebSocketListener(){
+            @Override public void onOpen(WebSocket socket,Response response){
+                realtimeConnecting=false;
+                realtimeSocket=socket;
+                realtimeReconnectScheduled=false;
+            }
+            @Override public void onMessage(WebSocket socket,String text){
+                handleRealtimeEvent(text);
+            }
+            @Override public void onClosed(WebSocket socket,int code,String reason){
+                if(realtimeSocket==socket)realtimeSocket=null;
+                realtimeConnecting=false;
+                scheduleRealtimeReconnect();
+            }
+            @Override public void onFailure(WebSocket socket,Throwable error,Response response){
+                if(realtimeSocket==socket)realtimeSocket=null;
+                realtimeConnecting=false;
+                if(response!=null&&response.code()==401){
+                    runOnUiThread(()->{
+                        prefs.edit().clear().apply();
+                        token="";
+                        stopRealtime();
+                        showAuth();
+                        toast("Сессия завершена. Войдите снова.");
+                    });
+                }else{
+                    scheduleRealtimeReconnect();
+                }
+            }
+        });
+    }
+
+    private void scheduleRealtimeReconnect(){
+        if(token.isEmpty()||realtimeReconnectScheduled)return;
+        realtimeReconnectScheduled=true;
+        realtimeReconnectTask=()->{
+            realtimeReconnectScheduled=false;
+            ensureRealtimeConnected();
+        };
+        uiHandler.postDelayed(realtimeReconnectTask,3000);
+    }
+
+    private void stopRealtime(){
+        if(realtimeReconnectTask!=null)uiHandler.removeCallbacks(realtimeReconnectTask);
+        realtimeReconnectTask=null;
+        realtimeReconnectScheduled=false;
+        realtimeConnecting=false;
+        if(realtimeSocket!=null){
+            realtimeSocket.close(1000,"client closing");
+            realtimeSocket=null;
+        }
+        if(realtimeHttp!=null){
+            realtimeHttp.dispatcher().executorService().shutdown();
+            realtimeHttp.connectionPool().evictAll();
+            realtimeHttp=null;
+        }
+    }
+
+    private void sendRealtimeTyping(long chatId){
+        if(realtimeSocket==null)return;
+        JSONObject event=new JSONObject();
+        try{
+            event.put("type","typing");
+            event.put("chat_id",chatId);
+            realtimeSocket.send(event.toString());
+        }catch(JSONException ignored){}
+    }
+
+    private void handleRealtimeEvent(String raw){
+        try{
+            JSONObject event=new JSONObject(raw);
+            String type=event.optString("type","");
+            long chatId=event.optLong("chat_id",0);
+            runOnUiThread(()->{
+                if("message.created".equals(type)||"message.deleted".equals(type)){
+                    cachedChats=null;
+                    if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null){
+                        refreshMessages(chatId,activeMessages,activeHistory);
+                    }else if(activeChatsList!=null){
+                        requestGet("/chats",result->{
+                            JSONArray fresh=result.optJSONArray("chats");
+                            if(fresh!=null){
+                                cachedChats=fresh;
+                                if(activeChatsList!=null)renderChats(activeChatsList,fresh);
+                            }
+                        });
+                    }
+                }else if("typing".equals(type)&&currentChat==chatId&&activeChatStatus!=null){
+                    activeChatStatus.setText("печатает…");
+                    uiHandler.postDelayed(()->{
+                        if(currentChat==chatId&&activeChatStatus!=null)
+                            activeChatStatus.setText(activeChatSubtitle);
+                    },2500);
+                }
+            });
+        }catch(JSONException ignored){}
+    }
+
     private interface Done{void accept(JSONObject value);}
     private void requestGet(String path,Done done){request(path,null,true,done);}
     private interface Failed{void accept(JSONObject value,int status);}
@@ -1467,5 +1618,6 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onDestroy(){
         if(clearHighlightTask!=null)uiHandler.removeCallbacks(clearHighlightTask);
+        stopRealtime();
         super.onDestroy();io.shutdown();}
 }
