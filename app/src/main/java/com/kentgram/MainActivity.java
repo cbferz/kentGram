@@ -1086,11 +1086,13 @@ public final class MainActivity extends Activity {
             if(currentChat!=id)return;
             messages.removeAllViews();
             JSONArray a=r.optJSONArray("messages");
+            long latestMessageId=0;
             if(a!=null)for(int i=0;i<a.length();i++){
                 JSONObject m=a.optJSONObject(i);
                 if(m==null)continue;
                 boolean mine=m.optBoolean("is_mine");
                 long messageId=m.optLong("id",0);
+                latestMessageId=Math.max(latestMessageId,messageId);
                 String body=m.optString("body","");
                 LinearLayout row=new LinearLayout(this);
                 row.setTag(Long.valueOf(messageId));
@@ -1144,6 +1146,11 @@ public final class MainActivity extends Activity {
                 messages.addView(row);
             }
             history.post(()->history.fullScroll(View.FOCUS_DOWN));
+            if(latestMessageId>0){
+                JSONObject readBody=new JSONObject();
+                try{readBody.put("last_read_message_id",latestMessageId);}catch(JSONException ignored){}
+                request("/chats/"+id+"/read",readBody,true,ignored->{});
+            }
         });
     }
 
