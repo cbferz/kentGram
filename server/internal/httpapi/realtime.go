@@ -91,7 +91,7 @@ func (h *realtimeHub) publish(userIDs []int64, event realtimeEvent, excludeUserI
 	}
 }
 
-func (c *realtimeClient) readPump(api *API) {
+func (c *realtimeClient) readPump(api *API, ctx context.Context) {
 	defer c.hub.unregister(c)
 	c.conn.SetReadLimit(1024)
 	_ = c.conn.SetReadDeadline(time.Now().Add(70 * time.Second))
@@ -114,7 +114,7 @@ func (c *realtimeClient) readPump(api *API) {
 		if incoming.Type != "typing" {
 			continue
 		}
-		member, err := api.db.IsChatMember(context.Background(), incoming.ChatID, c.userID)
+		member, err := api.db.IsChatMember(ctx, incoming.ChatID, c.userID)
 		if err != nil || !member {
 			continue
 		}
@@ -174,5 +174,5 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 	}
 	client := a.hub.register(userID(r), conn)
 	go client.writePump()
-	client.readPump(a)
+	client.readPump(a, r.Context())
 }
