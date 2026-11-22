@@ -33,3 +33,8 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}
 }
+
+@media(min-width:761px){
+  .app-shell.settings-open .conversation{display:none}
+  .app-shell.settings-open .settings-panel{display:block!important}
+}
