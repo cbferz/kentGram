@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -176,4 +177,16 @@ func (s *Store) TransferCommunityOwnership(ctx context.Context, chatID, ownerID,
 	if err != nil { return err }
 	if tag.RowsAffected() == 0 { return ErrNotFound }
 	return tx.Commit(ctx)
+}
+
+ // JoinPublicCommunityChat joins a public group/channel by its public username.
+ // Repeated requests are idempotent and do not create duplicate memberships.
+func (s *Store) JoinPublicCommunityChat(ctx context.Context, userID int64, username string) (int64, error) {
+	var chatID int64
+	err := s.Pool.QueryRow(ctx, `INSERT INTO chat_members(chat_id,user_id)
+		SELECT id,$1 FROM chats
+		WHERE lower(username)=lower($2) AND is_public AND kind IN ('group','channel')
+		ON CONFLICT(chat_id,user_id) DO UPDATE SET joined_at=chat_members.joined_at
+		RETURNING chat_id`, userID, strings.TrimPrefix(strings.TrimSpace(username), "@")).Scan(&chatID)
+	return chatID, norm(err)
 }
