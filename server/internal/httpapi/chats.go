@@ -78,3 +78,49 @@ func (a *API) deleteChatMessage(w http.ResponseWriter, r *http.Request) {
     a.publishChatEvent(r.Context(), chatID, realtimeEvent{Type:"message.deleted", ChatID:chatID, MessageID:messageID}, 0)
     writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
+
+func (a *API) markChatRead(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+	if err != nil || chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+		return
+	}
+	var q struct {
+		LastReadMessageID int64 `json:"last_read_message_id"`
+	}
+	if decodeJSON(w, r, &q) != nil || q.LastReadMessageID < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_read_cursor")
+		return
+	}
+	cursor, err := a.db.MarkChatRead(r.Context(), chatID, userID(r), q.LastReadMessageID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "chat_not_found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "chat_read_update_failed")
+		return
+	}
+	a.publishChatEvent(r.Context(), chatID, realtimeEvent{
+		Type: "chat.read", ChatID: chatID, MessageID: cursor, UserID: userID(r),
+	}, 0)
+	writeJSON(w, http.StatusOK, map[string]int64{"last_read_message_id": cursor})
+}
+
+func (a *API) getChatReadCursors(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+	if err != nil || chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+		return
+	}
+	cursors, err := a.db.ChatReadCursors(r.Context(), chatID, userID(r))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "chat_not_found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_cursors_load_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"read_cursors": cursors})
+}
