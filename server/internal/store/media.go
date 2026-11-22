@@ -24,7 +24,8 @@ func (s *Store) CreateChatMediaMessage(ctx context.Context, chatID, uploaderID i
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `INSERT INTO chat_media(
+	var inserted string
+	err = tx.QueryRow(ctx, `INSERT INTO chat_media(
 		media_id,chat_id,uploader_id,storage_name,original_name,content_type,size_bytes
 	)
 	SELECT $1,$2,$3,$4,$5,$6,$7
@@ -34,9 +35,10 @@ func (s *Store) CreateChatMediaMessage(ctx context.Context, chatID, uploaderID i
 			SELECT 1 FROM chat_members permission
 			WHERE permission.chat_id=c.id AND permission.user_id=$3
 			  AND permission.role IN ('owner','admin')
-		)))`,
+		)))
+	RETURNING media_id`,
 		media.MediaID, chatID, uploaderID, media.StorageName, media.OriginalName,
-		media.ContentType, media.SizeBytes)
+		media.ContentType, media.SizeBytes).Scan(&inserted)
 	if err != nil {
 		return ChatMessage{}, norm(err)
 	}
