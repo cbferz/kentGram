@@ -183,6 +183,8 @@ func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, sender
 	if err != nil {
 		return "", err
 	}
+	_, _ = s.Pool.Exec(ctx, `UPDATE chats SET pinned_message_id=NULL,pinned_by=NULL
+		WHERE id=$1 AND pinned_message_id=$2`, chatID, messageID)
 	return storageName, nil
 }
 
@@ -264,7 +266,7 @@ func (s *Store) ForwardChatMessage(ctx context.Context, sourceChatID, sourceMess
 	SELECT destination.id,$4,source.body,source.chat_id,source.id,source_user.username
 	FROM chats destination
 	JOIN chat_members destination_member ON destination_member.chat_id=destination.id AND destination_member.user_id=$4
-	JOIN messages source ON source.chat_id=$1 AND source.id=$2 AND source.deleted_at IS NULL
+	JOIN messages source ON source.chat_id=$1 AND source.id=$2 AND source.deleted_at IS NULL AND source.media_id IS NULL
 	JOIN users source_user ON source_user.id=source.sender_id
 	WHERE destination.id=$3
 	  AND EXISTS(SELECT 1 FROM chat_members source_member WHERE source_member.chat_id=$1 AND source_member.user_id=$4)
