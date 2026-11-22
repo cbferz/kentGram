@@ -7,6 +7,7 @@ RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -H -u 10001 app && mkdir -p /data/avatars /data/media && chown -R app:app /data
 WORKDIR /app
+ENV AVATAR_DIR=/data/avatars MEDIA_DIR=/data/media
 COPY --from=build /out/kentgram-api /app/kentgram-api
 USER app
 EXPOSE 8080
