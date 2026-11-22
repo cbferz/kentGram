@@ -240,6 +240,7 @@ func (c *realtimeClient) writePump() {
 
 func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{
+		Subprotocols:    []string{"kentgram"},
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
@@ -248,7 +249,7 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 				return true // Native Android clients do not send an Origin header.
 			}
 			parsed, err := url.Parse(origin)
-			return err == nil && strings.EqualFold(parsed.Host, r.Host)
+			return err == nil && (strings.EqualFold(parsed.Host, r.Host) || strings.EqualFold(origin, webClientOrigin))
 		},
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
