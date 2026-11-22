@@ -52,7 +52,7 @@ public final class MainActivity extends Activity {
     private LinearLayout replyPreview;
     private long replyToMessageId=0;
     private String replyToBody="", replyToSender="";
-    private long currentChat=0;
+    private long currentChat=0, activePeerID=0;
     private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
     private final HashMap<Long,ArrayDeque<Long>> replyQueues=new HashMap<>();
     private final HashSet<Long> sendingChats=new HashSet<>();
@@ -690,6 +690,7 @@ public final class MainActivity extends Activity {
             String peerUsername=c.optString("peer_username","");
             String peerAvatarUrl=c.optString("peer_avatar_url","");
             final long chatId=id;
+            final long peerId=c.optLong("peer_id",0);
             final String peerName=name;
             final String peerHandle=peerUsername;
             final String peerAvatar=peerAvatarUrl;
@@ -723,7 +724,7 @@ public final class MainActivity extends Activity {
             card.setTranslationY(dp(7));
             card.animate().alpha(1f).translationY(0f).setStartDelay(Math.min(i*32L,256L))
                     .setDuration(190).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
-            card.setOnClickListener(v->openChat(chatId,peerName,peerHandle,peerAvatar,chatKind));
+            card.setOnClickListener(v->openChat(chatId,peerName,peerHandle,peerAvatar,chatKind,peerId));
             card.setOnTouchListener((v,event)->{
                 if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)
                     v.animate().scaleX(.985f).scaleY(.985f).setDuration(70).start();
@@ -770,7 +771,7 @@ public final class MainActivity extends Activity {
                     try{body.put("user_id",uid);}catch(Exception ignored){}
                     request("/chats/direct",body,true,created->{
                         String peer=displayName.isEmpty()?"@"+username:displayName;
-                        openChat(created.optLong("chat_id"),peer,username,u.optString("avatar_url",""));
+                        openChat(created.optLong("chat_id"),peer,username,u.optString("avatar_url",""),"direct",uid);
                     });
                 });
                 LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
@@ -810,8 +811,12 @@ public final class MainActivity extends Activity {
         openChat(id,peer,peerUsername,peerAvatarUrl,"direct");
     }
     private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl,String chatKind){
+        openChat(id,peer,peerUsername,peerAvatarUrl,chatKind,0);
+    }
+    private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl,String chatKind,long peerID){
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         onChatScreen=true;onNewChatScreen=false;
+        activePeerID="direct".equals(chatKind)?peerID:0;
         activePeerUsername="direct".equals(chatKind)&&peerUsername!=null?peerUsername:"";
         activePeerAvatarUrl="direct".equals(chatKind)&&peerAvatarUrl!=null?peerAvatarUrl:"";
         currentChat=id;
@@ -1084,9 +1089,13 @@ public final class MainActivity extends Activity {
     private void refreshMessages(long id,LinearLayout messages,ScrollView history){
         requestGet("/chats/"+id+"/messages",r->{
             if(currentChat!=id)return;
-            messages.removeAllViews();
             JSONArray a=r.optJSONArray("messages");
-            long latestMessageId=0;
+            requestGet("/chats/"+id+"/read",readState->{
+                if(currentChat!=id)return;
+                JSONObject cursors=readState.optJSONObject("read_cursors");
+                long peerRead=activePeerID>0&&cursors!=null?cursors.optLong(String.valueOf(activePeerID),0):0;
+                messages.removeAllViews();
+                long latestMessageId=0;
             if(a!=null)for(int i=0;i<a.length();i++){
                 JSONObject m=a.optJSONObject(i);
                 if(m==null)continue;
@@ -1135,6 +1144,12 @@ public final class MainActivity extends Activity {
                 }
                 messageLine.addView(bubble,p);
                 row.addView(messageLine,new LinearLayout.LayoutParams(-1,-2));
+                if(mine&&activePeerID>0){
+                    TextView receipt=label(messageId<=peerRead?"✓✓ Прочитано":"✓ Отправлено",10,
+                            messageId<=peerRead?0xFF8FB4FF:MUTED,false);
+                    receipt.setGravity(Gravity.RIGHT);
+                    row.addView(receipt,new LinearLayout.LayoutParams(-1,-2));
+                }
                 bubble.setOnLongClickListener(v->{
                     MessageActionMenu.show(this,bubble,body,mine,mine,
                             ()->confirmDeleteMessage(id,messageId,messages,history),
@@ -1151,6 +1166,7 @@ public final class MainActivity extends Activity {
                 try{readBody.put("last_read_message_id",latestMessageId);}catch(JSONException ignored){}
                 request("/chats/"+id+"/read",readBody,true,ignored->{});
             }
+            });
         });
     }
 
