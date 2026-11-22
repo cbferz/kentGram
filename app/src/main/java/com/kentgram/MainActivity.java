@@ -399,8 +399,7 @@ public final class MainActivity extends Activity {
                 LinearLayout row=new LinearLayout(this);row.setTag(Long.valueOf(messageId));row.setOrientation(1);
                 row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
                 long replyId=m.optLong("reply_to_message_id",0);String quoted=m.optString("reply_to_body","");String quotedSender=m.optString("reply_to_sender_username","");
-                if(replyId>0){TextView quote=label((quotedSender.isEmpty()?"Ответ на сообщение":"Ответ на @"+quotedSender)+"\
-"+(quoted.isEmpty()?"Сообщение недоступно":quoted),12,MUTED,false);quote.setPadding(dp(9),dp(6),dp(9),dp(6));quote.setBackground(round(0xFF111925,10));LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(-2,-2);qp.setMargins(dp(2),dp(4),dp(2),0);row.addView(quote,qp);quote.setOnClickListener(v->scrollToMessage(messages,history,replyId));}
+                if(replyId>0){TextView quote=label((quotedSender.isEmpty()?"Ответ на сообщение":"Ответ на @"+quotedSender)+"\\n"+(quoted.isEmpty()?"Сообщение недоступно":quoted),12,MUTED,false);quote.setPadding(dp(9),dp(6),dp(9),dp(6));quote.setBackground(round(0xFF111925,10));LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(-2,-2);qp.setMargins(dp(2),dp(4),dp(2),0);row.addView(quote,qp);quote.setOnClickListener(v->scrollToMessage(messages,history,replyId));}
                 TextView bubble=label(body,15,TEXT,false);
                 bubble.setPadding(dp(13),dp(9),dp(13),dp(9));
                 bubble.setBackground(round(mine?0xFF17466A:0xFF202A38,16));
