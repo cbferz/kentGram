@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 )
 
 type PollOption struct {
@@ -123,4 +122,26 @@ func (s *Store) ClosePoll(ctx context.Context, chatID, pollID, actorID int64) er
 	return nil
 }
 
-var _ = pgx.ErrNoRows
+
+func (s *Store) ListPolls(ctx context.Context, chatID, viewerID int64, limit int) ([]Poll, error) {
+	if limit < 1 || limit > 100 { limit = 50 }
+	rows, err := s.Pool.Query(ctx, `SELECT p.id FROM polls p
+		JOIN chat_members cm ON cm.chat_id=p.chat_id AND cm.user_id=$2
+		WHERE p.chat_id=$1 ORDER BY p.created_at DESC,p.id DESC LIMIT $3`, chatID, viewerID, limit)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil { return nil, err }
+		ids = append(ids,id)
+	}
+	if err := rows.Err(); err != nil { return nil, err }
+	out := make([]Poll,0,len(ids))
+	for _, id := range ids {
+		p, err := s.GetPoll(ctx,chatID,id,viewerID)
+		if err != nil { return nil,err }
+		out=append(out,p)
+	}
+	return out,nil
+}
