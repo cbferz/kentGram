@@ -17,6 +17,7 @@ type API struct {
 	apiLimiter   *ipRateLimiter
 	authLimiter  *ipRateLimiter
 	loginLimiter *ipRateLimiter
+	hub          *realtimeHub
 }
 
 func New(db *store.Store, cfg config.Config) *API {
@@ -30,13 +31,13 @@ func New(db *store.Store, cfg config.Config) *API {
 		authLimiter: newIPRateLimiter(10, time.Minute),
 		// Brute-force guard per target account, independent of source IP.
 		loginLimiter: newIPRateLimiter(10, 15*time.Minute),
+		hub:          newRealtimeHub(),
 	}
 }
 
 func (a *API) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer,
-		middleware.Timeout(20*time.Second), securityHeaders)
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, securityHeaders)
 
 	r.Get("/health", a.health)
 	r.Get("/media/avatars/{filename}", a.avatarFile)
@@ -45,7 +46,12 @@ func (a *API) Routes() http.Handler {
 		r.Use(a.apiLimiter.middleware)
 
 		r.Group(func(r chi.Router) {
-			r.Use(a.authLimiter.middleware)
+			r.Use(middleware.Timeout(20*time.Second), a.authenticate)
+			r.Get("/realtime", a.realtime)
+		})
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(20*time.Second), a.authLimiter.middleware)
 			r.Post("/auth/register", a.register)
 			r.Post("/auth/login", a.login)
 			r.Post("/auth/refresh", a.refresh)
