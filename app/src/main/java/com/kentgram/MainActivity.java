@@ -787,9 +787,23 @@ public final class MainActivity extends Activity {
             if(currentChat!=id)return;
             messages.removeAllViews();
             JSONArray a=r.optJSONArray("messages");
+            String previousDay="";
             if(a!=null)for(int i=0;i<a.length();i++){
                 JSONObject m=a.optJSONObject(i);
                 if(m==null)continue;
+                String createdAt=m.optString("created_at","");
+                String dayLabel=formatMessageDay(createdAt);
+                if(!dayLabel.isEmpty()&&!dayLabel.equals(previousDay)){
+                    TextView dayDivider=label(dayLabel,11,MUTED,true);
+                    dayDivider.setGravity(Gravity.CENTER);
+                    dayDivider.setPadding(dp(12),dp(6),dp(12),dp(6));
+                    dayDivider.setBackground(round(PANEL_ALT,16));
+                    LinearLayout.LayoutParams dayParams=new LinearLayout.LayoutParams(-2,-2);
+                    dayParams.gravity=Gravity.CENTER_HORIZONTAL;
+                    dayParams.setMargins(0,dp(12),0,dp(7));
+                    messages.addView(dayDivider,dayParams);
+                    previousDay=dayLabel;
+                }
                 boolean mine=m.optBoolean("is_mine");
                 long messageId=m.optLong("id",0);
                 String body=m.optString("body","");
@@ -835,7 +849,6 @@ public final class MainActivity extends Activity {
                 messageLine.addView(bubble,p);
                 row.addView(messageLine,new LinearLayout.LayoutParams(-1,-2));
 
-                String createdAt=m.optString("created_at","");
                 boolean edited=m.optString("edited_at","").length()>0;
                 String metaText=formatMessageTime(createdAt)+(edited?" · изменено":"");
                 if(mine)metaText+=(m.optBoolean("is_read")?" · Прочитано":" · Отправлено");
@@ -886,21 +899,38 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private String formatMessageTime(String raw){
-        if(raw==null||raw.isEmpty())return "";
-        Date parsed=null;
+    private Date parseMessageDate(String raw){
+        if(raw==null||raw.isEmpty())return null;
         String[] patterns={"yyyy-MM-dd'T'HH:mm:ss.SSSXXX","yyyy-MM-dd'T'HH:mm:ssXXX","yyyy-MM-dd'T'HH:mm:ss'Z'"};
         for(String pattern:patterns){
             try{
                 SimpleDateFormat parser=new SimpleDateFormat(pattern,Locale.US);
                 parser.setLenient(false);
                 if(pattern.endsWith("'Z'"))parser.setTimeZone(TimeZone.getTimeZone("UTC"));
-                parsed=parser.parse(raw);
-                if(parsed!=null)break;
+                Date parsed=parser.parse(raw);
+                if(parsed!=null)return parsed;
             }catch(Exception ignored){}
         }
+        return null;
+    }
+
+    private String formatMessageTime(String raw){
+        Date parsed=parseMessageDate(raw);
+        return parsed==null?"":new SimpleDateFormat("HH:mm",Locale.getDefault()).format(parsed);
+    }
+
+    private String formatMessageDay(String raw){
+        Date parsed=parseMessageDate(raw);
         if(parsed==null)return "";
-        return new SimpleDateFormat("HH:mm",Locale.getDefault()).format(parsed);
+        java.util.Calendar message=java.util.Calendar.getInstance();
+        message.setTime(parsed);
+        java.util.Calendar today=java.util.Calendar.getInstance();
+        if(message.get(java.util.Calendar.YEAR)==today.get(java.util.Calendar.YEAR)
+                &&message.get(java.util.Calendar.DAY_OF_YEAR)==today.get(java.util.Calendar.DAY_OF_YEAR))return "Сегодня";
+        today.add(java.util.Calendar.DAY_OF_YEAR,-1);
+        if(message.get(java.util.Calendar.YEAR)==today.get(java.util.Calendar.YEAR)
+                &&message.get(java.util.Calendar.DAY_OF_YEAR)==today.get(java.util.Calendar.DAY_OF_YEAR))return "Вчера";
+        return new SimpleDateFormat("d MMMM yyyy",new Locale("ru")).format(parsed);
     }
 
     private void showReactionPicker(View anchor,long chatId,long messageId,LinearLayout messages,ScrollView history){
