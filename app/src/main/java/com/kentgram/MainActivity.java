@@ -1776,7 +1776,7 @@ public final class MainActivity extends Activity {
                 if(loaded!=null){
                     mediaCache.put(url,loaded);
                     if(targets!=null)for(ImageView view:targets)
-                        if(!isFinishing()&&view.getWindowToken()!=null)view.setImageBitmap(loaded);
+                        if(!isFinishing())view.setImageBitmap(loaded);
                 }
             });
         });
