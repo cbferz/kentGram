@@ -1,9 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
-	"context"
 	"net/url"
 	"strings"
 	"sync"
@@ -17,16 +17,18 @@ type realtimeEvent struct {
 	ChatID    int64  `json:"chat_id,omitempty"`
 	MessageID int64  `json:"message_id,omitempty"`
 	UserID    int64  `json:"user_id,omitempty"`
+	Online    bool   `json:"online"`
 }
 
 type realtimeClient struct {
 	userID    int64
 	sessionID int64
 	conn      *websocket.Conn
-	send   chan []byte
-	done   chan struct{}
-	hub    *realtimeHub
-	once   sync.Once
+	send      chan []byte
+	done      chan struct{}
+	hub       *realtimeHub
+	api       *API
+	once      sync.Once
 }
 
 type realtimeHub struct {
@@ -38,41 +40,48 @@ func newRealtimeHub() *realtimeHub {
 	return &realtimeHub{clients: make(map[int64]map[*realtimeClient]struct{})}
 }
 
-func (h *realtimeHub) register(userID, sessionID int64, conn *websocket.Conn) *realtimeClient {
+// register returns true only when this is the user's first live connection.
+func (h *realtimeHub) register(userID, sessionID int64, conn *websocket.Conn, api *API) (*realtimeClient, bool) {
 	client := &realtimeClient{
-		userID:    userID,
-		sessionID: sessionID,
-		conn:      conn,
-		send:   make(chan []byte, 64),
-		done:   make(chan struct{}),
-		hub:    h,
+		userID: userID, sessionID: sessionID, conn: conn,
+		send: make(chan []byte, 64), done: make(chan struct{}), hub: h, api: api,
 	}
 	h.mu.Lock()
+	firstOnline := len(h.clients[userID]) == 0
 	if h.clients[userID] == nil {
 		h.clients[userID] = make(map[*realtimeClient]struct{})
 	}
 	h.clients[userID][client] = struct{}{}
 	h.mu.Unlock()
-	return client
+	return client, firstOnline
 }
 
-func (h *realtimeHub) unregister(client *realtimeClient) {
+// unregister returns true only when the user's final live connection closed.
+func (h *realtimeHub) unregister(client *realtimeClient) bool {
+	becameOffline := false
 	client.once.Do(func() {
 		h.mu.Lock()
 		if userClients := h.clients[client.userID]; userClients != nil {
 			delete(userClients, client)
 			if len(userClients) == 0 {
 				delete(h.clients, client.userID)
+				becameOffline = true
 			}
 		}
 		h.mu.Unlock()
 		close(client.done)
 		_ = client.conn.Close()
 	})
+	return becameOffline
 }
 
-// publish sends an event only to users who belong to the chat. A full client
-// queue drops that event; the client can recover the canonical state over HTTP.
+func (h *realtimeHub) isOnline(userID int64) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.clients[userID]) > 0
+}
+
+// publish sends events only to users in the supplied chat membership set.
 func (h *realtimeHub) publish(userIDs []int64, event realtimeEvent, excludeUserID int64) {
 	payload, err := json.Marshal(event)
 	if err != nil {
@@ -93,8 +102,28 @@ func (h *realtimeHub) publish(userIDs []int64, event realtimeEvent, excludeUserI
 	}
 }
 
-func (c *realtimeClient) readPump(api *API, ctx context.Context) {
-	defer c.hub.unregister(c)
+func (c *realtimeClient) enqueue(event realtimeEvent) {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	select {
+	case c.send <- payload:
+	default:
+	}
+}
+
+func (c *realtimeClient) unregister() {
+	if !c.hub.unregister(c) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c.api.publishUserPresence(ctx, c.userID, false)
+}
+
+func (c *realtimeClient) readPump(ctx context.Context) {
+	defer c.unregister()
 	c.conn.SetReadLimit(1024)
 	_ = c.conn.SetReadDeadline(time.Now().Add(70 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
@@ -113,30 +142,39 @@ func (c *realtimeClient) readPump(api *API, ctx context.Context) {
 		if json.Unmarshal(payload, &incoming) != nil || incoming.ChatID <= 0 {
 			continue
 		}
-		if incoming.Type != "typing" {
-			continue
-		}
-		member, err := api.db.IsChatMember(ctx, incoming.ChatID, c.userID)
+		member, err := c.api.db.IsChatMember(ctx, incoming.ChatID, c.userID)
 		if err != nil || !member {
 			continue
 		}
-		members, err := api.db.ChatMemberIDs(ctx, incoming.ChatID)
+		members, err := c.api.db.ChatMemberIDs(ctx, incoming.ChatID)
 		if err != nil {
 			continue
 		}
-		c.hub.publish(members, realtimeEvent{
-			Type: "typing",
-			ChatID: incoming.ChatID,
-			UserID: c.userID,
-		}, c.userID)
+
+		switch incoming.Type {
+		case "typing":
+			c.hub.publish(members, realtimeEvent{
+				Type: "typing", ChatID: incoming.ChatID, UserID: c.userID,
+			}, c.userID)
+		case "presence.subscribe":
+			for _, memberID := range members {
+				if memberID == c.userID {
+					continue
+				}
+				c.enqueue(realtimeEvent{
+					Type: "user.presence", ChatID: incoming.ChatID,
+					UserID: memberID, Online: c.hub.isOnline(memberID),
+				})
+			}
+		}
 	}
 }
 
-func (c *realtimeClient) writePump(api *API) {
+func (c *realtimeClient) writePump() {
 	ticker := time.NewTicker(25 * time.Second)
 	defer func() {
 		ticker.Stop()
-		c.hub.unregister(c)
+		c.unregister()
 	}()
 
 	for {
@@ -148,7 +186,7 @@ func (c *realtimeClient) writePump(api *API) {
 			}
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			active, err := api.db.SessionActive(ctx, c.sessionID, c.userID)
+			active, err := c.api.db.SessionActive(ctx, c.sessionID, c.userID)
 			cancel()
 			if err != nil || !active {
 				return
@@ -180,9 +218,30 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	client := a.hub.register(userID(r), sessionID(r), conn)
-	go client.writePump(a)
-	client.readPump(a, r.Context())
+	client, firstOnline := a.hub.register(userID(r), sessionID(r), conn, a)
+	if firstOnline {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		a.publishUserPresence(ctx, client.userID, true)
+		cancel()
+	}
+	go client.writePump()
+	client.readPump(r.Context())
+}
+
+func (a *API) publishUserPresence(ctx context.Context, userID int64, online bool) {
+	chatIDs, err := a.db.ChatIDsForUser(ctx, userID)
+	if err != nil {
+		return
+	}
+	for _, chatID := range chatIDs {
+		members, err := a.db.ChatMemberIDs(ctx, chatID)
+		if err != nil {
+			continue
+		}
+		a.hub.publish(members, realtimeEvent{
+			Type: "user.presence", ChatID: chatID, UserID: userID, Online: online,
+		}, userID)
+	}
 }
 
 func (a *API) publishChatEvent(ctx context.Context, chatID int64, event realtimeEvent, excludeUserID int64) {
