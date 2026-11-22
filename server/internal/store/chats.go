@@ -225,3 +225,20 @@ func (s *Store) ChatReadCursors(ctx context.Context, chatID, viewerID int64) (ma
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) ChatIDsForUser(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT chat_id FROM chat_members WHERE user_id=$1 ORDER BY chat_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []int64{}
+	for rows.Next() {
+		var chatID int64
+		if err := rows.Scan(&chatID); err != nil {
+			return nil, err
+		}
+		ids = append(ids, chatID)
+	}
+	return ids, rows.Err()
+}
