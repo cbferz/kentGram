@@ -10,26 +10,26 @@ import android.graphics.drawable.GradientDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.TextView;
-import android.widget.FrameLayout;
 
 final class MessageActionMenu {
     private MessageActionMenu() {}
 
-    static void show(Activity activity, View anchor, String message) {
+    static void show(Activity activity, View anchor, String message,
+                     boolean canDelete, Runnable onDelete) {
         if (activity == null || anchor == null || message == null) return;
 
         View decor = activity.getWindow().getDecorView();
+        FrameLayout frame = decor instanceof FrameLayout ? (FrameLayout) decor : null;
         View dim = new View(activity);
         dim.setBackgroundColor(0x99070B12);
-        FrameLayout.LayoutParams dimParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-        );
-        FrameLayout frame = decor instanceof FrameLayout ? (FrameLayout) decor : null;
-        if (frame != null) frame.addView(dim, dimParams);
+        if (frame != null) {
+            frame.addView(dim, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
 
         LinearLayout menu = new LinearLayout(activity);
         menu.setOrientation(LinearLayout.HORIZONTAL);
@@ -38,23 +38,38 @@ final class MessageActionMenu {
         GradientDrawable background = new GradientDrawable();
         background.setColor(0xFF202A38);
         background.setCornerRadius(dp(activity, 18));
+        background.setStroke(dp(activity, 1), 0xFF35465D);
         menu.setBackground(background);
 
-        PopupWindow popup = new PopupWindow(menu, dp(activity, 190), dp(activity, 54), true);
+        PopupWindow popup = new PopupWindow(menu, dp(activity, canDelete ? 240 : 130),
+                dp(activity, 56), true);
         popup.setBackgroundDrawable(background);
         popup.setOutsideTouchable(true);
         popup.setElevation(dp(activity, 16));
 
-        TextView copy = action(activity, "Копировать");
+        TextView copy = action(activity, "Копировать", 0xFFF4F7FB);
         menu.addView(copy, new LinearLayout.LayoutParams(0, -1, 1));
         copy.setOnClickListener(v -> {
             ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
             if (clipboard != null) {
                 clipboard.setPrimaryClip(ClipData.newPlainText("kentGram message", message));
-                android.widget.Toast.makeText(activity, "Сообщение скопировано", android.widget.Toast.LENGTH_SHORT).show();
+                android.widget.Toast.makeText(activity, "Сообщение скопировано",
+                        android.widget.Toast.LENGTH_SHORT).show();
             }
             popup.dismiss();
         });
+
+        if (canDelete) {
+            View separator = new View(activity);
+            separator.setBackgroundColor(0xFF35465D);
+            menu.addView(separator, new LinearLayout.LayoutParams(dp(activity, 1), dp(activity, 28)));
+            TextView delete = action(activity, "Удалить", 0xFFFF8995);
+            menu.addView(delete, new LinearLayout.LayoutParams(0, -1, 1));
+            delete.setOnClickListener(v -> {
+                popup.dismiss();
+                if (onDelete != null) onDelete.run();
+            });
+        }
 
         popup.setOnDismissListener(() -> {
             if (frame != null && dim.getParent() == frame) frame.removeView(dim);
@@ -62,21 +77,19 @@ final class MessageActionMenu {
 
         int[] location = new int[2];
         anchor.getLocationOnScreen(location);
-        int[] decorLocation = new int[2];
-        decor.getLocationOnScreen(decorLocation);
-        int x = Math.max(dp(activity, 12), location[0] + anchor.getWidth() / 2 - dp(activity, 95));
-        int y = Math.max(dp(activity, 28), location[1] - dp(activity, 66));
+        int x = Math.max(dp(activity, 12),
+                location[0] + anchor.getWidth() / 2 - dp(activity, canDelete ? 120 : 65));
+        int y = Math.max(dp(activity, 28), location[1] - dp(activity, 68));
         popup.showAtLocation(decor, Gravity.TOP | Gravity.LEFT, x, y);
-        dim.setOnClickListener(v -> popup.dismiss());
+        if (frame != null) dim.setOnClickListener(v -> popup.dismiss());
         dim.bringToFront();
-        // Keep the action surface above the dim layer.
         popup.getContentView().bringToFront();
     }
 
-    private static TextView action(Activity activity, String title) {
+    private static TextView action(Activity activity, String title, int color) {
         TextView view = new TextView(activity);
         view.setText(title);
-        view.setTextColor(Color.WHITE);
+        view.setTextColor(color);
         view.setTextSize(14);
         view.setTypeface(null, Typeface.BOLD);
         view.setGravity(Gravity.CENTER);

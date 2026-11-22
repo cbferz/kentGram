@@ -52,3 +52,27 @@ func (a *API) sendChatMessage(w http.ResponseWriter,r *http.Request) {
     if err!=nil { writeError(w,http.StatusInternalServerError,"message_send_failed");return }
     writeJSON(w,http.StatusCreated,m)
 }
+
+
+func (a *API) deleteChatMessage(w http.ResponseWriter, r *http.Request) {
+    chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+    if err != nil || chatID <= 0 {
+        writeError(w, http.StatusBadRequest, "invalid_chat_id")
+        return
+    }
+    messageID, err := strconv.ParseInt(chi.URLParam(r, "messageID"), 10, 64)
+    if err != nil || messageID <= 0 {
+        writeError(w, http.StatusBadRequest, "invalid_message_id")
+        return
+    }
+    err = a.db.DeleteChatMessage(r.Context(), chatID, messageID, userID(r))
+    if errors.Is(err, store.ErrNotFound) {
+        writeError(w, http.StatusNotFound, "message_not_found")
+        return
+    }
+    if err != nil {
+        writeError(w, http.StatusInternalServerError, "message_delete_failed")
+        return
+    }
+    writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}

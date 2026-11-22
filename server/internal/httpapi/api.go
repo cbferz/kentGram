@@ -62,6 +62,7 @@ func (a *API) Routes() http.Handler {
 			r.Post("/chats/direct", a.createDirectChat)
 			r.Get("/chats/{chatID}/messages", a.listChatMessages)
 			r.Post("/chats/{chatID}/messages", a.sendChatMessage)
+			r.Delete("/chats/{chatID}/messages/{messageID}", a.deleteChatMessage)
 
 			r.Get("/contacts", a.contacts)
 			r.Get("/me", a.me)
