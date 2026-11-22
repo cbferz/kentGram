@@ -46,7 +46,7 @@ public final class MainActivity extends Activity {
     private Runnable realtimeReconnectTask;
     private LinearLayout activeMessages, activeChatsList;
     private ScrollView activeHistory;
-    private TextView activeChatStatus;
+    private TextView activeChatStatus, activePinnedBanner;
     private String activeChatSubtitle="";
     private long lastTypingSentAt=0;
     private SharedPreferences prefs;
@@ -86,6 +86,7 @@ public final class MainActivity extends Activity {
         activeMessages=null;
         activeHistory=null;
         activeChatStatus=null;
+        activePinnedBanner=null;
         root=new LinearLayout(this);
         root.setOrientation(1);
         root.setFocusableInTouchMode(true);
@@ -875,6 +876,16 @@ public final class MainActivity extends Activity {
         peerBlock.setOnClickListener(openPeer);
         peerAvatar.setOnClickListener(openPeer);
 
+        activePinnedBanner=label("",12,0xFFBFD0EE,true);
+        activePinnedBanner.setPadding(dp(13),dp(10),dp(13),dp(10));
+        activePinnedBanner.setBackground(round(0xFF182438,12));
+        activePinnedBanner.setVisibility(View.GONE);
+        activePinnedBanner.setOnClickListener(v->{
+            Object tag=activePinnedBanner.getTag();
+            if(tag instanceof Long)scrollToMessage(activeMessages,activeHistory,(Long)tag);
+        });
+        root.addView(activePinnedBanner,1,new LinearLayout.LayoutParams(-1,-2));
+
         ScrollView history=new ScrollView(this);
         history.setClipToPadding(false);
         LinearLayout messages=new LinearLayout(this);
@@ -1216,7 +1227,10 @@ public final class MainActivity extends Activity {
                             ()->setReply(messageId,body,m.optString("sender_username","")),
                             ()->showEditMessage(id,messageId,body,messages,history),
                             emoji->sendMessageReaction(id,messageId,emoji,messages,history),
-                            ()->showForwardMessageDialog(id,messageId),
+                            ()->{
+                                if(!m.optString("media_id","").isEmpty())toast("Пересылка файлов пока не поддерживается");
+                                else showForwardMessageDialog(id,messageId);
+                            },
                             ()->pinMessage(id,messageId));
                     return true;
                 });
@@ -1332,6 +1346,25 @@ public final class MainActivity extends Activity {
         },180);
     }
 
+    private void updatePinnedBanner(long chatId,LinearLayout messages,ScrollView history){
+        requestGet("/chats/"+chatId+"/pin",result->{
+            if(currentChat!=chatId||activePinnedBanner==null)return;
+            JSONObject pinned=result.optJSONObject("pinned_message");
+            if(pinned==null){
+                activePinnedBanner.setVisibility(View.GONE);
+                activePinnedBanner.setTag(null);
+                return;
+            }
+            long messageId=pinned.optLong("id",0);
+            String text=pinned.optString("body","");
+            if(text.isEmpty())text=pinned.optString("media_name","Вложение");
+            if(text.length()>90)text=text.substring(0,87)+"…";
+            activePinnedBanner.setText("⌖ Закреплено: "+text);
+            activePinnedBanner.setTag(Long.valueOf(messageId));
+            activePinnedBanner.setVisibility(View.VISIBLE);
+        });
+    }
+
     private void showForwardMessageDialog(long sourceChatId,long messageId){
         requestGet("/chats",result->{
             JSONArray chats=result.optJSONArray("chats");
@@ -1369,6 +1402,7 @@ public final class MainActivity extends Activity {
         try{body.put("message_id",messageId);}catch(JSONException ignored){}
         request("/chats/"+chatId+"/pin",body,true,result->{
             toast("Сообщение закреплено");
+            if(activeMessages!=null&&activeHistory!=null)updatePinnedBanner(chatId,activeMessages,activeHistory);
         },(error,status)->toast(status==404?"Недостаточно прав или сообщение недоступно":"Не удалось закрепить"));
     }
 
@@ -1575,7 +1609,10 @@ public final class MainActivity extends Activity {
             String type=event.optString("type","");
             long chatId=event.optLong("chat_id",0);
             runOnUiThread(()->{
-                if("message.created".equals(type)||"message.deleted".equals(type)){
+                if("chat.pinned".equals(type)||"chat.unpinned".equals(type)){
+                    if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null)
+                        updatePinnedBanner(chatId,activeMessages,activeHistory);
+                }else if("message.created".equals(type)||"message.deleted".equals(type)){
                     cachedChats=null;
                     if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null){
                         refreshMessages(chatId,activeMessages,activeHistory);
