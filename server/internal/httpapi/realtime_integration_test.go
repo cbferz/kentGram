@@ -64,7 +64,7 @@ func TestRealtimeMessageAndTypingEvents(t *testing.T) {
 	messageID := int64(asMap(t, sent)["id"].(float64))
 
 	_ = peerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, payload, err := peerSocket.ReadMessage()
+	_, payload, err = peerSocket.ReadMessage()
 	if err != nil {
 		t.Fatalf("read message event: %v", err)
 	}
