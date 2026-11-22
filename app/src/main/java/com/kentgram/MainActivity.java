@@ -959,6 +959,8 @@ public final class MainActivity extends Activity {
                 boolean canPost=!"channel".equals(chatKind)||"owner".equals(role)||"admin".equals(role);
                 composer.setEnabled(canPost);
                 send.setEnabled(canPost);
+                attach.setEnabled(canPost);
+                attach.setAlpha(canPost?1f:.35f);
                 composer.setHint(canPost?"Сообщение":"Публиковать могут только администраторы");
                 send.setAlpha(canPost?1f:.35f);
             });
