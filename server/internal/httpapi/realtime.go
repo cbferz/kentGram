@@ -118,7 +118,7 @@ func (c *realtimeClient) readPump(api *API, ctx context.Context) {
 		if err != nil || !member {
 			continue
 		}
-		members, err := api.db.ChatMemberIDs(apiRequestContext(c), incoming.ChatID)
+		members, err := api.db.ChatMemberIDs(ctx, incoming.ChatID)
 		if err != nil {
 			continue
 		}
