@@ -50,6 +50,7 @@ func (a *API) sendChatMessage(w http.ResponseWriter,r *http.Request) {
     m,err:=a.db.SendChatMessage(r.Context(),chatID,userID(r),q.Text,q.ReplyToMessageID)
     if errors.Is(err,store.ErrNotFound) { writeError(w,http.StatusNotFound,"chat_or_reply_not_found");return }
     if err!=nil { writeError(w,http.StatusInternalServerError,"message_send_failed");return }
+    a.publishChatEvent(r.Context(), chatID, realtimeEvent{Type:"message.created", ChatID:chatID, MessageID:m.ID}, userID(r))
     writeJSON(w,http.StatusCreated,m)
 }
 
@@ -74,5 +75,6 @@ func (a *API) deleteChatMessage(w http.ResponseWriter, r *http.Request) {
         writeError(w, http.StatusInternalServerError, "message_delete_failed")
         return
     }
+    a.publishChatEvent(r.Context(), chatID, realtimeEvent{Type:"message.deleted", ChatID:chatID, MessageID:messageID}, userID(r))
     writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
