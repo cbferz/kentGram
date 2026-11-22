@@ -71,6 +71,16 @@ func TestChatMediaUploadAndMembershipScopedDownload(t *testing.T) {
 	if message["media_mime"] != "image/png" || message["media_name"] != "photo.png" {
 		t.Fatalf("unexpected media metadata: %+v", message)
 	}
+	history := call(t, handler, http.MethodGet, fmt.Sprintf("/api/v1/chats/%d/messages", chatID), peer.Access, nil)
+	expectStatus(t, history, http.StatusOK)
+	historyMessages, ok := asMap(t, history)["messages"].([]any)
+	if !ok || len(historyMessages) == 0 {
+		t.Fatal("uploaded media message missing from chat history")
+	}
+	historyMessage := historyMessages[len(historyMessages)-1].(map[string]any)
+	if historyMessage["media_url"] != fmt.Sprintf("/chats/%d/media/%s", chatID, mediaID) {
+		t.Fatalf("unexpected history media URL: %v", historyMessage["media_url"])
+	}
 
 	downloadPath := fmt.Sprintf("/api/v1/chats/%d/media/%s", chatID, mediaID)
 	download := call(t, handler, http.MethodGet, downloadPath, peer.Access, nil)
