@@ -117,7 +117,7 @@ func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int
     for rows.Next() {
         var m ChatMessage
         if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername,&m.MediaID,&m.MediaMime,&m.MediaName,&m.MediaSize);err!=nil{return nil,err}
-        if m.MediaID!="" { m.MediaURL="/api/v1/chats/"+strconv.FormatInt(m.ChatID,10)+"/media/"+m.MediaID }
+        if m.MediaID!="" { m.MediaURL="/chats/"+strconv.FormatInt(m.ChatID,10)+"/media/"+m.MediaID }
         out=append(out,m)
     }
     for i,j:=0,len(out)-1;i<j;i,j=i+1,j-1 { out[i],out[j]=out[j],out[i] }
