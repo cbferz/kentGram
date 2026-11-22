@@ -1,10 +1,11 @@
 # kentGram
 
-Native Android messenger and social client with a Go/PostgreSQL backend.
+Cross-platform messenger: native Android client and responsive browser client, backed by one Go/PostgreSQL API.
 
 ## Stack
 
 - Android client: Java, Android SDK 35, Gradle Kotlin DSL
+- Web client: responsive HTML/CSS/JavaScript SPA served by Nginx
 - Backend: Go 1.23, chi HTTP router, PostgreSQL 16
 - Authentication: Bearer access tokens, refresh tokens, revocable device sessions
 - Realtime: authenticated WebSocket transport with bounded per-connection queues
@@ -23,6 +24,19 @@ Native Android messenger and social client with a Go/PostgreSQL backend.
 - Per-member read cursors and realtime read receipts
 - JPEG/PNG images and PDF attachments (20 MiB maximum)
 - Membership-checked media downloads; deleted messages no longer expose their attachments
+
+## Web client
+
+The browser client lives in `web/` and uses the same accounts, chats, messages, media, sessions and realtime API as Android. It includes login/registration, user search, direct chats, message history, sending, JPEG/PNG/PDF attachments, realtime chat updates, and session management. Browser access is restricted by the API to `https://web.kentgram.tendercheck.pro`; realtime authentication uses a WebSocket subprotocol rather than putting access tokens in URLs.
+
+The Compose `web` service listens on `127.0.0.1:8081`. Configure the HTTPS reverse proxy for `web.kentgram.tendercheck.pro` to proxy to `http://127.0.0.1:8081`, preserving the `Host` header. Keep the API reverse proxy on `api.kentgram.tendercheck.pro` and allow WebSocket upgrades there. Then rebuild and start the services:
+
+```sh
+docker compose build web api
+docker compose up -d web api
+```
+
+The domain's DNS and external TLS/reverse-proxy configuration are infrastructure settings and are not changed by this repository commit.
 
 ## Backend development
 
