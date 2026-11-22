@@ -111,3 +111,30 @@ func (s *Store) SendChatMessage(ctx context.Context, chatID,senderID int64,body 
     if err=s.Pool.QueryRow(ctx,`SELECT username FROM users WHERE id=$1`,senderID).Scan(&m.SenderUsername);err!=nil{return m,err}
     return m,nil
 }
+
+
+// DeleteChatMessage soft-deletes only messages sent by a current chat member.
+// Both IDs are scoped in the UPDATE to prevent cross-chat message mutations.
+func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, senderID int64) error {
+    _, err := s.Pool.Exec(ctx, `UPDATE messages
+        SET deleted_at = NOW()
+        WHERE id = $1 AND chat_id = $2 AND sender_id = $3
+          AND deleted_at IS NULL
+          AND EXISTS (SELECT 1 FROM chat_members WHERE chat_id = $2 AND user_id = $3)`,
+        messageID, chatID, senderID)
+    if err != nil {
+        return err
+    }
+    var visible bool
+    err = s.Pool.QueryRow(ctx, `SELECT EXISTS(
+        SELECT 1 FROM messages
+        WHERE id = $1 AND chat_id = $2 AND sender_id = $3 AND deleted_at IS NOT NULL
+    )`, messageID, chatID, senderID).Scan(&visible)
+    if err != nil {
+        return err
+    }
+    if !visible {
+        return ErrNotFound
+    }
+    return nil
+}
