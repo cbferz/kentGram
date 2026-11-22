@@ -37,7 +37,7 @@ func New(db *store.Store, cfg config.Config) *API {
 
 func (a *API) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, securityHeaders)
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, webCORS, securityHeaders)
 
 	r.Get("/health", a.health)
 	r.Get("/media/avatars/{filename}", a.avatarFile)
