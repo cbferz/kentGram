@@ -76,3 +76,38 @@ func (a *API) deleteChatMessage(w http.ResponseWriter, r *http.Request) {
     }
     writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
+
+func (a *API) editChatMessage(w http.ResponseWriter, r *http.Request) {
+    chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+    if err != nil || chatID <= 0 { writeError(w, http.StatusBadRequest, "invalid_chat_id"); return }
+    messageID, err := strconv.ParseInt(chi.URLParam(r, "messageID"), 10, 64)
+    if err != nil || messageID <= 0 { writeError(w, http.StatusBadRequest, "invalid_message_id"); return }
+    var q struct { Text string `json:"text"` }
+    if decodeJSON(w, r, &q) != nil { writeError(w, http.StatusBadRequest, "invalid_json"); return }
+    q.Text = strings.TrimSpace(q.Text)
+    if q.Text == "" || len([]rune(q.Text)) > 4000 {
+        writeError(w, http.StatusBadRequest, "message_must_be_1_to_4000_characters"); return
+    }
+    m, err := a.db.EditChatMessage(r.Context(), chatID, messageID, userID(r), q.Text)
+    if errors.Is(err, store.ErrNotFound) { writeError(w, http.StatusNotFound, "message_not_found_or_not_editable"); return }
+    if err != nil { writeError(w, http.StatusInternalServerError, "message_edit_failed"); return }
+    writeJSON(w, http.StatusOK, m)
+}
+
+func (a *API) toggleMessageReaction(w http.ResponseWriter, r *http.Request) {
+    chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+    if err != nil || chatID <= 0 { writeError(w, http.StatusBadRequest, "invalid_chat_id"); return }
+    messageID, err := strconv.ParseInt(chi.URLParam(r, "messageID"), 10, 64)
+    if err != nil || messageID <= 0 { writeError(w, http.StatusBadRequest, "invalid_message_id"); return }
+    var q struct { Emoji string `json:"emoji"` }
+    if decodeJSON(w, r, &q) != nil { writeError(w, http.StatusBadRequest, "invalid_json"); return }
+    allowed := map[string]bool{"👍":true,"❤️":true,"😂":true,"😮":true,"😢":true,"🔥":true,"👏":true,"🎉":true}
+    if !allowed[q.Emoji] { writeError(w, http.StatusBadRequest, "unsupported_reaction"); return }
+    if err := a.db.ToggleMessageReaction(r.Context(), chatID, messageID, userID(r), q.Emoji); errors.Is(err, store.ErrNotFound) {
+        writeError(w, http.StatusNotFound, "message_not_found"); return
+    } else if err != nil {
+        writeError(w, http.StatusInternalServerError, "reaction_update_failed"); return
+    }
+    writeJSON(w, http.StatusOK, map[string]bool{"updated":true})
+}
+

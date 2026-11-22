@@ -18,6 +18,10 @@ import org.json.*;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.ArrayDeque;
@@ -783,9 +787,23 @@ public final class MainActivity extends Activity {
             if(currentChat!=id)return;
             messages.removeAllViews();
             JSONArray a=r.optJSONArray("messages");
+            String previousDay="";
             if(a!=null)for(int i=0;i<a.length();i++){
                 JSONObject m=a.optJSONObject(i);
                 if(m==null)continue;
+                String createdAt=m.optString("created_at","");
+                String dayLabel=formatMessageDay(createdAt);
+                if(!dayLabel.isEmpty()&&!dayLabel.equals(previousDay)){
+                    TextView dayDivider=label(dayLabel,11,MUTED,true);
+                    dayDivider.setGravity(Gravity.CENTER);
+                    dayDivider.setPadding(dp(12),dp(6),dp(12),dp(6));
+                    dayDivider.setBackground(round(PANEL_ALT,16));
+                    LinearLayout.LayoutParams dayParams=new LinearLayout.LayoutParams(-2,-2);
+                    dayParams.gravity=Gravity.CENTER_HORIZONTAL;
+                    dayParams.setMargins(0,dp(12),0,dp(7));
+                    messages.addView(dayDivider,dayParams);
+                    previousDay=dayLabel;
+                }
                 boolean mine=m.optBoolean("is_mine");
                 long messageId=m.optLong("id",0);
                 String body=m.optString("body","");
@@ -830,15 +848,154 @@ public final class MainActivity extends Activity {
                 }
                 messageLine.addView(bubble,p);
                 row.addView(messageLine,new LinearLayout.LayoutParams(-1,-2));
+
+                boolean edited=m.optString("edited_at","").length()>0;
+                String metaText=formatMessageTime(createdAt)+(edited?" · изменено":"");
+                if(mine)metaText+=(m.optBoolean("is_read")?" · Прочитано":" · Отправлено");
+                TextView meta=label(metaText,10,MUTED,false);
+                meta.setPadding(dp(7),0,dp(7),dp(2));
+                LinearLayout.LayoutParams metaParams=new LinearLayout.LayoutParams(-2,-2);
+                metaParams.gravity=mine?Gravity.RIGHT:Gravity.LEFT;
+                row.addView(meta,metaParams);
+
+                LinearLayout reactionRow=new LinearLayout(this);
+                reactionRow.setOrientation(LinearLayout.HORIZONTAL);
+                reactionRow.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
+                JSONArray reactions=m.optJSONArray("reactions");
+                if(reactions!=null)for(int ri=0;ri<reactions.length();ri++){
+                    JSONObject reaction=reactions.optJSONObject(ri);
+                    if(reaction==null)continue;
+                    String emoji=reaction.optString("emoji","");
+                    int count=reaction.optInt("count",0);
+                    boolean selected=reaction.optBoolean("mine");
+                    TextView chip=label(emoji+"  "+count,12,selected?0xFFDCE7FF:0xFFB7C1D0,true);
+                    chip.setGravity(Gravity.CENTER);
+                    chip.setIncludeFontPadding(false);
+                    chip.setPadding(dp(10),dp(6),dp(10),dp(6));
+                    android.graphics.drawable.GradientDrawable chipBackground=round(selected?0xFF263B5B:0xFF171E29,18);
+                    chipBackground.setStroke(dp(1),selected?0xFF648DFF:0xFF303B4C);
+                    chip.setBackground(chipBackground);
+                    LinearLayout.LayoutParams chipParams=new LinearLayout.LayoutParams(-2,dp(30));
+                    chipParams.setMargins(dp(3),dp(3),dp(3),dp(2));
+                    reactionRow.addView(chip,chipParams);
+                    chip.setOnClickListener(v->toggleReaction(id,messageId,emoji,messages,history));
+                }
+                if(reactionRow.getChildCount()>0){
+                    LinearLayout.LayoutParams reactionParams=new LinearLayout.LayoutParams(-1,-2);
+                    reactionParams.gravity=mine?Gravity.RIGHT:Gravity.LEFT;
+                    reactionParams.setMargins(0,dp(1),0,dp(2));
+                    row.addView(reactionRow,reactionParams);
+                }
+
                 bubble.setOnLongClickListener(v->{
                     MessageActionMenu.show(this,bubble,body,mine,
                             ()->confirmDeleteMessage(id,messageId,messages,history),
-                            ()->setReply(messageId,body,m.optString("sender_username","")));
+                            ()->setReply(messageId,body,m.optString("sender_username","")),
+                            ()->editMessage(id,messageId,body,messages,history),
+                            emoji->toggleReaction(id,messageId,emoji,messages,history));
                     return true;
                 });
                 messages.addView(row);
             }
             history.post(()->history.fullScroll(View.FOCUS_DOWN));
+        });
+    }
+
+    private Date parseMessageDate(String raw){
+        if(raw==null||raw.isEmpty())return null;
+        String[] patterns={"yyyy-MM-dd'T'HH:mm:ss.SSSXXX","yyyy-MM-dd'T'HH:mm:ssXXX","yyyy-MM-dd'T'HH:mm:ss'Z'"};
+        for(String pattern:patterns){
+            try{
+                SimpleDateFormat parser=new SimpleDateFormat(pattern,Locale.US);
+                parser.setLenient(false);
+                if(pattern.endsWith("'Z'"))parser.setTimeZone(TimeZone.getTimeZone("UTC"));
+                Date parsed=parser.parse(raw);
+                if(parsed!=null)return parsed;
+            }catch(Exception ignored){}
+        }
+        return null;
+    }
+
+    private String formatMessageTime(String raw){
+        Date parsed=parseMessageDate(raw);
+        return parsed==null?"":new SimpleDateFormat("HH:mm",Locale.getDefault()).format(parsed);
+    }
+
+    private String formatMessageDay(String raw){
+        Date parsed=parseMessageDate(raw);
+        if(parsed==null)return "";
+        java.util.Calendar message=java.util.Calendar.getInstance();
+        message.setTime(parsed);
+        java.util.Calendar today=java.util.Calendar.getInstance();
+        if(message.get(java.util.Calendar.YEAR)==today.get(java.util.Calendar.YEAR)
+                &&message.get(java.util.Calendar.DAY_OF_YEAR)==today.get(java.util.Calendar.DAY_OF_YEAR))return "Сегодня";
+        today.add(java.util.Calendar.DAY_OF_YEAR,-1);
+        if(message.get(java.util.Calendar.YEAR)==today.get(java.util.Calendar.YEAR)
+                &&message.get(java.util.Calendar.DAY_OF_YEAR)==today.get(java.util.Calendar.DAY_OF_YEAR))return "Вчера";
+        return new SimpleDateFormat("d MMMM yyyy",new Locale("ru")).format(parsed);
+    }
+
+    private void showReactionPicker(View anchor,long chatId,long messageId,LinearLayout messages,ScrollView history){
+        android.widget.PopupMenu popup=new android.widget.PopupMenu(this,anchor);
+        String[] emojis={"👍","❤️","😂","😮","😢","🔥","👏","🎉"};
+        for(String emoji:emojis)popup.getMenu().add(emoji);
+        popup.setOnMenuItemClickListener(item->{
+            toggleReaction(chatId,messageId,item.getTitle().toString(),messages,history);
+            return true;
+        });
+        popup.show();
+    }
+
+    private void toggleReaction(long chatId,long messageId,String emoji,LinearLayout messages,ScrollView history){
+        JSONObject body=new JSONObject();
+        try{body.put("emoji",emoji);}catch(Exception ignored){}
+        request("/chats/"+chatId+"/messages/"+messageId+"/reactions",body,true,
+                result->{if(currentChat==chatId)refreshMessages(chatId,messages,history);});
+    }
+
+    private void editMessage(long chatId,long messageId,String oldText,LinearLayout messages,ScrollView history){
+        EditText editor=field("Текст сообщения");
+        editor.setText(oldText);
+        editor.setSelection(editor.length());
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Изменить сообщение")
+                .setView(editor)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Сохранить",(dialog,which)->{
+                    String updated=editor.getText().toString().trim();
+                    if(updated.isEmpty()){toast("Сообщение не может быть пустым");return;}
+                    if(updated.equals(oldText))return;
+                    JSONObject payload=new JSONObject();
+                    try{payload.put("text",updated);}catch(Exception ignored){}
+                    requestPatch("/chats/"+chatId+"/messages/"+messageId,payload,
+                            result->{if(currentChat==chatId)refreshMessages(chatId,messages,history);});
+                }).show();
+    }
+
+    private void requestPatch(String path,JSONObject body,Done done){
+        io.execute(()->{
+            JSONObject out=new JSONObject();int status=0;
+            try{
+                HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();
+                c.setRequestMethod("PUT");
+                c.setConnectTimeout(12000);c.setReadTimeout(12000);
+                c.setRequestProperty("Accept","application/json");
+                c.setRequestProperty("Content-Type","application/json");
+                if(!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);
+                c.setDoOutput(true);
+                try(OutputStream stream=c.getOutputStream()){stream.write(body.toString().getBytes(StandardCharsets.UTF_8));}
+                status=c.getResponseCode();
+                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
+                if(in!=null){ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[4096];int n;while((n=in.read(buffer))>0)bytes.write(buffer,0,n);try{out=new JSONObject(bytes.toString("UTF-8"));}catch(JSONException ignored){}}
+                c.disconnect();
+            }catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}
+            final JSONObject result=out;final int code=status;
+            runOnUiThread(()->{
+                if(code>=200&&code<300)done.accept(result);
+                else if(code==401){prefs.edit().clear().apply();token="";showAuth();}
+                else KentDialog.showMessage(this,"Не удалось изменить сообщение",
+                        result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
+            });
         });
     }
 
