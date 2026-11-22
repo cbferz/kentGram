@@ -831,15 +831,140 @@ public final class MainActivity extends Activity {
                 messageLine.addView(bubble,p);
                 row.addView(messageLine,new LinearLayout.LayoutParams(-1,-2));
                 bubble.setOnLongClickListener(v->{
-                    MessageActionMenu.show(this,bubble,body,mine,
+                    MessageActionMenu.show(this,bubble,body,mine,mine,
                             ()->confirmDeleteMessage(id,messageId,messages,history),
-                            ()->setReply(messageId,body,m.optString("sender_username","")));
+                            ()->setReply(messageId,body,m.optString("sender_username","")),
+                            ()->showEditMessage(id,messageId,body,messages,history),
+                            emoji->sendMessageReaction(id,messageId,emoji,messages,history));
                     return true;
                 });
                 messages.addView(row);
             }
             history.post(()->history.fullScroll(View.FOCUS_DOWN));
         });
+    }
+
+
+    private void showEditMessage(long chatId,long messageId,String oldText,
+                                 LinearLayout messages,ScrollView history){
+        if(messageId<=0)return;
+
+        android.app.Dialog dialog=new android.app.Dialog(this);
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20),dp(20),dp(20),dp(14));
+        panel.setBackground(round(PANEL,24));
+
+        TextView title=label("Редактировать сообщение",19,TEXT,true);
+        title.setPadding(0,0,0,dp(14));
+        panel.addView(title);
+
+        EditText input=field("Введите текст сообщения");
+        input.setText(oldText);
+        input.setMinLines(3);
+        input.setMaxLines(7);
+        input.setGravity(Gravity.TOP|Gravity.LEFT);
+        input.setSelection(input.length());
+        panel.addView(input);
+
+        LinearLayout buttons=new LinearLayout(this);
+        buttons.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+
+        TextView cancel=label("Отмена",14,MUTED,true);
+        cancel.setGravity(Gravity.CENTER);
+        cancel.setPadding(dp(15),dp(13),dp(15),dp(13));
+        buttons.addView(cancel);
+
+        TextView save=label("Сохранить",14,Color.WHITE,true);
+        save.setGravity(Gravity.CENTER);
+        save.setPadding(dp(18),dp(13),dp(18),dp(13));
+        save.setBackground(round(ACCENT,22));
+        LinearLayout.LayoutParams saveParams=new LinearLayout.LayoutParams(-2,-2);
+        saveParams.leftMargin=dp(8);
+        buttons.addView(save);
+
+        LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);
+        bp.topMargin=dp(12);
+        panel.addView(buttons,bp);
+
+        dialog.setContentView(panel);
+        android.view.Window window=dialog.getWindow();
+        if(window!=null){
+            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            android.view.WindowManager.LayoutParams attrs=window.getAttributes();
+            attrs.dimAmount=0.68f;
+            window.setAttributes(attrs);
+        }
+
+        cancel.setOnClickListener(v->dialog.dismiss());
+        save.setOnClickListener(v->{
+            String text=input.getText().toString().trim();
+            if(text.isEmpty()){
+                toast("Сообщение не может быть пустым");
+                return;
+            }
+            if(text.equals(oldText)){
+                dialog.dismiss();
+                return;
+            }
+            JSONObject payload=new JSONObject();
+            try{
+                payload.put("text",text);
+            }catch(JSONException e){
+                toast("Не удалось подготовить сообщение");
+                return;
+            }
+            save.setEnabled(false);
+            requestMethod("PUT","/chats/"+chatId+"/messages/"+messageId,
+                    payload,true,result->{
+                        dialog.dismiss();
+                        if(currentChat==chatId)refreshMessages(chatId,messages,history);
+                        toast("Сообщение изменено");
+                    },(error,status)->{
+                        save.setEnabled(true);
+                        toast(error.optString("error","Не удалось изменить сообщение"));
+                    });
+        });
+
+        dialog.show();
+        if(window!=null){
+            window.setLayout(
+                    getResources().getDisplayMetrics().widthPixels-dp(36),
+                    android.view.WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+        input.requestFocus();
+        input.postDelayed(()->{
+            android.view.inputmethod.InputMethodManager imm=
+                    (android.view.inputmethod.InputMethodManager)
+                    getSystemService(INPUT_METHOD_SERVICE);
+            if(imm!=null)imm.showSoftInput(input,
+                    android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        },180);
+    }
+
+    private void sendMessageReaction(long chatId,long messageId,String emoji,
+                                     LinearLayout messages,ScrollView history){
+        if(messageId<=0)return;
+        JSONObject payload=new JSONObject();
+        try{
+            payload.put("emoji",emoji);
+        }catch(JSONException e){
+            toast("Не удалось добавить реакцию");
+            return;
+        }
+        requestMethod("POST","/chats/"+chatId+"/messages/"+messageId+"/reactions",
+                payload,true,result->{
+                    if(currentChat==chatId)refreshMessages(chatId,messages,history);
+                },(error,status)->{
+                    String code=error.optString("error","");
+                    if("reaction_limit_reached".equals(code)){
+                        toast("Можно поставить не более 3 реакций на сообщение");
+                    }else{
+                        toast(code.isEmpty()?"Не удалось добавить реакцию":code);
+                    }
+                });
     }
 
     private void setReply(long messageId,String body,String sender){
@@ -930,12 +1055,73 @@ public final class MainActivity extends Activity {
         request(path,body,auth,done,null);
     }
     private void request(String path,JSONObject body,boolean auth,Done done,Failed failed){
-        io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);String responseText=b.toString("UTF-8");try{out=new JSONObject(responseText);}catch(JSONException parseError){out=new JSONObject();out.put("error",status==404?"endpoint_not_found":status>=500?"server_error":"http_error");}}c.disconnect();}catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{
-            if(code>=200&&code<300){done.accept(result);return;}
-            if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}
-            else KentDialog.showMessage(this,code==404?"Маршрут не найден":"Не удалось выполнить запрос",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
-            if(failed!=null)failed.accept(result,code);
-        });});
+        requestMethod(body==null?"GET":"POST",path,body,auth,done,failed);
+    }
+    private void requestMethod(String method,String path,JSONObject body,boolean auth,
+                               Done done,Failed failed){
+        io.execute(()->{
+            JSONObject out=new JSONObject();
+            int status=0;
+            try{
+                HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();
+                c.setRequestMethod(method);
+                c.setConnectTimeout(12000);
+                c.setReadTimeout(12000);
+                c.setRequestProperty("Accept","application/json");
+                if(auth&&!token.isEmpty())
+                    c.setRequestProperty("Authorization","Bearer "+token);
+                if(body!=null){
+                    c.setDoOutput(true);
+                    c.setRequestProperty("Content-Type","application/json");
+                    try(OutputStream stream=c.getOutputStream()){
+                        stream.write(body.toString().getBytes(StandardCharsets.UTF_8));
+                    }
+                }
+                status=c.getResponseCode();
+                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
+                if(in!=null){
+                    ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+                    byte[] buffer=new byte[4096];
+                    int count;
+                    while((count=in.read(buffer))>0)bytes.write(buffer,0,count);
+                    try{
+                        out=new JSONObject(bytes.toString("UTF-8"));
+                    }catch(JSONException parseError){
+                        out=new JSONObject();
+                        out.put("error",status==404?"endpoint_not_found":
+                                status>=500?"server_error":"http_error");
+                    }
+                }
+                c.disconnect();
+            }catch(Exception e){
+                try{out.put("error","connection_failed");}
+                catch(Exception ignored){}
+            }
+
+            final JSONObject result=out;
+            final int code=status;
+            runOnUiThread(()->{
+                if(code>=200&&code<300){
+                    if(done!=null)done.accept(result);
+                    return;
+                }
+                if(code==401&&auth){
+                    prefs.edit().clear().apply();
+                    token="";
+                    showAuth();
+                    toast("Войдите снова");
+                    return;
+                }
+                if(failed!=null){
+                    failed.accept(result,code);
+                    return;
+                }
+                KentDialog.showMessage(this,
+                        code==404?"Маршрут не найден":"Не удалось выполнить запрос",
+                        result.optString("error","Ошибка соединения")+" ("+code+")",
+                        "Понятно",null);
+            });
+        });
     }
     private void requestDelete(String path,Done done){
         io.execute(()->{
