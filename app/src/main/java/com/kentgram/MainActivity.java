@@ -832,6 +832,7 @@ public final class MainActivity extends Activity {
         activePeerUsername="direct".equals(chatKind)&&peerUsername!=null?peerUsername:"";
         activePeerAvatarUrl="direct".equals(chatKind)&&peerAvatarUrl!=null?peerAvatarUrl:"";
         currentChat=id;
+        sendRealtimePresenceSubscribe(id);
         base(peer);
         root.removeViewAt(1);
         if(navBar!=null)root.removeView(navBar);
@@ -1442,6 +1443,7 @@ public final class MainActivity extends Activity {
                 realtimeConnecting=false;
                 realtimeSocket=socket;
                 realtimeReconnectScheduled=false;
+                sendRealtimePresenceSubscribe(currentChat);
             }
             @Override public void onMessage(WebSocket socket,String text){
                 handleRealtimeEvent(text);
@@ -1495,6 +1497,17 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private void sendRealtimePresenceSubscribe(long chatId){
+        WebSocket socket=realtimeSocket;
+        if(socket==null||chatId<=0)return;
+        JSONObject event=new JSONObject();
+        try{
+            event.put("type","presence.subscribe");
+            event.put("chat_id",chatId);
+            socket.send(event.toString());
+        }catch(JSONException ignored){}
+    }
+
     private void sendRealtimeTyping(long chatId){
         if(realtimeSocket==null)return;
         JSONObject event=new JSONObject();
@@ -1524,6 +1537,10 @@ public final class MainActivity extends Activity {
                             }
                         });
                     }
+                }else if("user.presence".equals(type)&&currentChat==chatId&&
+                        event.optLong("user_id",0)==activePeerID&&activePeerID>0&&activeChatStatus!=null){
+                    activeChatSubtitle=event.optBoolean("online")?"в сети":"не в сети";
+                    activeChatStatus.setText(activeChatSubtitle);
                 }else if("chat.read".equals(type)&&currentChat==chatId&&
                         event.optLong("user_id",0)==activePeerID&&activePeerID>0){
                     activePeerReadCursor=Math.max(activePeerReadCursor,event.optLong("message_id",0));
