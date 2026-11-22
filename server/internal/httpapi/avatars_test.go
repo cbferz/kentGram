@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/cbferz/kentgram/server/internal/config"
 )
 
@@ -18,9 +20,11 @@ func TestAvatarFileServesPersistentImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &API{cfg: config.Config{AvatarDir: dir}}
+	router := chi.NewRouter()
+	router.Get("/media/avatars/{filename}", a.avatarFile)
 	req := httptest.NewRequest(http.MethodGet, "/media/avatars/"+name, nil)
 	rec := httptest.NewRecorder()
-	a.avatarFile(rec, req)
+	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
@@ -37,10 +41,12 @@ func TestAvatarFileServesPersistentImage(t *testing.T) {
 
 func TestAvatarFileRejectsUnsafeNames(t *testing.T) {
 	a := &API{cfg: config.Config{AvatarDir: t.TempDir()}}
-	for _, name := range []string{"../secret.png", "avatar.svg", "not-a-random-id.png"} {
+	router := chi.NewRouter()
+	router.Get("/media/avatars/{filename}", a.avatarFile)
+	for _, name := range []string{"..%2Fsecret.png", "avatar.svg", "not-a-random-id.png"} {
 		req := httptest.NewRequest(http.MethodGet, "/media/avatars/"+name, nil)
 		rec := httptest.NewRecorder()
-		a.avatarFile(rec, req)
+		router.ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("name %q: status = %d, want 404", name, rec.Code)
 		}
