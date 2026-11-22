@@ -154,3 +154,25 @@ func (s *Store) CommunityChat(ctx context.Context, chatID, viewerID int64) (Comm
 		Scan(&c.ID,&c.Kind,&c.Title,&c.Description,&c.IsPublic,&c.Username,&c.Role,&c.MemberCount,&c.CreatedAt)
 	return c, norm(err)
 }
+
+ // TransferCommunityOwnership atomically demotes the current owner to admin
+ // and promotes an existing member. The target must already belong to this chat.
+func (s *Store) TransferCommunityOwnership(ctx context.Context, chatID, ownerID, targetID int64) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+	var targetExists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2 AND user_id<>$3
+	)`, chatID, targetID, ownerID).Scan(&targetExists); err != nil { return err }
+	if !targetExists { return ErrNotFound }
+	tag, err := tx.Exec(ctx, `UPDATE chat_members SET role='admin'
+		WHERE chat_id=$1 AND user_id=$2 AND role='owner'
+		  AND EXISTS(SELECT 1 FROM chats WHERE id=$1 AND kind IN ('group','channel'))`, chatID, ownerID)
+	if err != nil { return err }
+	if tag.RowsAffected() == 0 { return ErrNotFound }
+	tag, err = tx.Exec(ctx, `UPDATE chat_members SET role='owner' WHERE chat_id=$1 AND user_id=$2`, chatID, targetID)
+	if err != nil { return err }
+	if tag.RowsAffected() == 0 { return ErrNotFound }
+	return tx.Commit(ctx)
+}
