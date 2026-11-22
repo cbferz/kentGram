@@ -307,7 +307,7 @@ func (s *Store) UnpinChatMessage(ctx context.Context, chatID, actorID int64) err
 func (s *Store) PinnedChatMessage(ctx context.Context, chatID, viewerID int64) (ChatMessage, error) {
 	var m ChatMessage
 	err := s.Pool.QueryRow(ctx, `SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),
-		m.forwarded_from_chat_id,m.forwarded_from_message_id,m.forwarded_from_username
+		COALESCE(m.forwarded_from_chat_id,0),COALESCE(m.forwarded_from_message_id,0),m.forwarded_from_username
 		FROM chats c
 		JOIN chat_members cm ON cm.chat_id=c.id AND cm.user_id=$2
 		JOIN messages m ON m.id=c.pinned_message_id AND m.chat_id=c.id AND m.deleted_at IS NULL
