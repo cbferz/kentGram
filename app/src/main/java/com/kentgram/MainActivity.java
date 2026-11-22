@@ -407,8 +407,8 @@ public final class MainActivity extends Activity {
                 if(pending!=null&&!pending.isEmpty())pending.removeFirst();
                 sendingChats.remove(id);
                 if(pending!=null&&pending.isEmpty())sendQueues.remove(id);
-                refreshMessages(id,messages,history);
-                pumpSendQueue(id,messages,history);
+                if(pending!=null&&!pending.isEmpty())pumpSendQueue(id,messages,history);
+                else refreshMessages(id,messages,history);
             },
             (error,status)->{
                 sendingChats.remove(id);
