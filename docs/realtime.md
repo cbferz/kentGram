@@ -16,6 +16,7 @@ the server periodically checks that the backing session has not been revoked.
 {"type":"message.deleted","chat_id":42,"message_id":901}
 {"type":"typing","chat_id":42,"user_id":17}
 {"type":"chat.read","chat_id":42,"message_id":901,"user_id":17}
+{"type":"user.presence","chat_id":42,"user_id":17,"online":true}
 ```
 
 Message events contain identifiers only. Clients fetch canonical message
@@ -26,11 +27,17 @@ does not bypass chat membership checks or duplicate message serialization.
 
 ```json
 {"type":"typing","chat_id":42}
+{"type":"presence.subscribe","chat_id":42}
 ```
 
 Typing events are accepted only after the server verifies that the connected
 user is a member of the referenced chat. They are broadcast to other current
 members, never to arbitrary users.
+
+Presence subscriptions return the current online/offline state for other members
+of the requested chat. Online/offline changes are emitted only to users who
+share at least one chat with the affected account. Multiple devices are tracked
+per user: a user goes offline only after their final live WebSocket closes.
 
 Read acknowledgements use the authenticated REST endpoint
 `POST /api/v1/chats/{chatID}/read` with `last_read_message_id`. The server
