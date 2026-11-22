@@ -283,12 +283,28 @@ func (a *API) signAccess(uid, sid int64) (string, error) {
 func (a *API) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.SplitN(strings.TrimSpace(r.Header.Get("Authorization")), " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		rawToken := ""
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			rawToken = strings.TrimSpace(parts[1])
+		}
+		// The browser WebSocket API cannot set Authorization headers. For the
+		// realtime endpoint only, accept a bearer token in a negotiated
+		// subprotocol; never put access tokens in URLs or query strings.
+		if rawToken == "" && r.URL.Path == "/api/v1/realtime" {
+			for _, protocol := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
+				protocol = strings.TrimSpace(protocol)
+				if strings.HasPrefix(protocol, "bearer.") {
+					rawToken = strings.TrimPrefix(protocol, "bearer.")
+					break
+				}
+			}
+		}
+		if rawToken == "" {
 			writeError(w, http.StatusUnauthorized, "missing_bearer_token")
 			return
 		}
 
-		uid, sid, ok := a.parseAccess(parts[1])
+		uid, sid, ok := a.parseAccess(rawToken)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "invalid_token")
 			return
