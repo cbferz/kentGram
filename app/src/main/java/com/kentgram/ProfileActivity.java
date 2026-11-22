@@ -94,7 +94,6 @@ public final class ProfileActivity extends Activity {
             card.setPadding(dp(16),dp(12),dp(16),dp(14));
             card.setBackground(round(PANEL,22));
             content.addView(card);
-            section(card,"Имя пользователя");
             section(card,"Отображаемое имя");
             card.addView(displayName);
             section(card,"О себе");
@@ -115,7 +114,7 @@ public final class ProfileActivity extends Activity {
             content.addView(card);
             section(card,"Имя пользователя");
             card.addView(label("@"+username,15,MUTED,true));
-            section("Имя");
+            section(card,"Имя");
             card.addView(displayName);
             section(card,"О себе");
             card.addView(bio);
