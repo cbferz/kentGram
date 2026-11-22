@@ -1,6 +1,7 @@
 package com.kentgram;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.animation.ValueAnimator;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -481,9 +482,11 @@ public final class MainActivity extends Activity {
         section.setGravity(Gravity.CENTER_VERTICAL);
         TextView caption=label("Последние",15,TEXT,true);
         section.addView(caption,new LinearLayout.LayoutParams(0,-2,1));
-        TextView countHint=label("ВАШИ ЧАТЫ",9,MUTED,true);
-        countHint.setLetterSpacing(.12f);
-        section.addView(countHint);
+        TextView createCommunity=label("+ Группа / канал",11,ACCENT,true);
+        createCommunity.setPadding(dp(8),dp(7),dp(8),dp(7));
+        createCommunity.setBackground(round(PANEL_ALT,12));
+        createCommunity.setOnClickListener(v->showCommunityCreateDialog());
+        section.addView(createCommunity);
         content.addView(section);
         LinearLayout chatsList=new LinearLayout(this);
         chatsList.setOrientation(1);
@@ -520,6 +523,63 @@ public final class MainActivity extends Activity {
         int navIndex=root.indexOfChild(navBar);
         root.addView(fabBar,navIndex<0?root.getChildCount():navIndex,
                 new LinearLayout.LayoutParams(-1,-2));
+    }
+
+    private void showCommunityCreateDialog(){
+        LinearLayout form=new LinearLayout(this);
+        form.setOrientation(1);
+        form.setPadding(dp(18),dp(8),dp(18),0);
+        EditText titleInput=field("Название");
+        titleInput.setSingleLine(true);
+        form.addView(titleInput,new LinearLayout.LayoutParams(-1,dp(52)));
+        RadioGroup typeGroup=new RadioGroup(this);
+        typeGroup.setOrientation(RadioGroup.HORIZONTAL);
+        RadioButton groupOption=new RadioButton(this);
+        groupOption.setText("Группа");
+        groupOption.setTextColor(TEXT);
+        groupOption.setId(View.generateViewId());
+        RadioButton channelOption=new RadioButton(this);
+        channelOption.setText("Канал");
+        channelOption.setTextColor(TEXT);
+        channelOption.setId(View.generateViewId());
+        typeGroup.addView(groupOption);
+        typeGroup.addView(channelOption);
+        groupOption.setChecked(true);
+        form.addView(typeGroup);
+        EditText descriptionInput=field("Описание (необязательно)");
+        descriptionInput.setSingleLine(false);
+        descriptionInput.setMinLines(2);
+        form.addView(descriptionInput,new LinearLayout.LayoutParams(-1,dp(76)));
+        new AlertDialog.Builder(this)
+                .setTitle("Новое сообщество")
+                .setView(form)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Создать",null)
+                .create();
+        AlertDialog dialog=new AlertDialog.Builder(this)
+                .setTitle("Новое сообщество")
+                .setView(form)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Создать",null)
+                .create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{
+            String title=titleInput.getText().toString().trim();
+            if(title.isEmpty()||title.length()>80){toast("Название: от 1 до 80 символов");return;}
+            JSONObject body=new JSONObject();
+            try{
+                body.put("kind",channelOption.isChecked()?"channel":"group");
+                body.put("title",title);
+                body.put("description",descriptionInput.getText().toString().trim());
+                body.put("is_public",false);
+            }catch(JSONException ignored){}
+            request("/chats/community",body,true,result->{
+                dialog.dismiss();
+                cachedChats=null;
+                showChats();
+                toast(channelOption.isChecked()?"Канал создан":"Группа создана");
+            });
+        }));
+        dialog.show();
     }
 
     private void loadChats(LinearLayout chatsList){
@@ -568,8 +628,10 @@ public final class MainActivity extends Activity {
             JSONObject c=chats.optJSONObject(i);
             if(c==null)continue;
             long id=c.optLong("id");
-            String name=c.optString("peer_display_name");
-            if(name.isEmpty())name="@"+c.optString("peer_username");
+            String kind=c.optString("kind","direct");
+            boolean community="group".equals(kind)||"channel".equals(kind);
+            String name=community?c.optString("title",""):c.optString("peer_display_name");
+            if(name.isEmpty())name=community?"Сообщество":"@"+c.optString("peer_username");
             String last=c.optString("last_message","Начните общение");
             String peerUsername=c.optString("peer_username","");
             String peerAvatarUrl=c.optString("peer_avatar_url","");
@@ -577,6 +639,7 @@ public final class MainActivity extends Activity {
             final String peerName=name;
             final String peerHandle=peerUsername;
             final String peerAvatar=peerAvatarUrl;
+            final String chatKind=kind;
 
             LinearLayout card=new LinearLayout(this);
             card.setGravity(Gravity.CENTER_VERTICAL);
@@ -606,7 +669,7 @@ public final class MainActivity extends Activity {
             card.setTranslationY(dp(7));
             card.animate().alpha(1f).translationY(0f).setStartDelay(Math.min(i*32L,256L))
                     .setDuration(190).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
-            card.setOnClickListener(v->openChat(chatId,peerName,peerHandle,peerAvatar));
+            card.setOnClickListener(v->openChat(chatId,peerName,peerHandle,peerAvatar,chatKind));
             card.setOnTouchListener((v,event)->{
                 if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)
                     v.animate().scaleX(.985f).scaleY(.985f).setDuration(70).start();
@@ -690,6 +753,9 @@ public final class MainActivity extends Activity {
         });
     }
     private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl){
+        openChat(id,peer,peerUsername,peerAvatarUrl,"direct");
+    }
+    private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl,String chatKind){
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         onChatScreen=true;onNewChatScreen=false;
         activePeerUsername=peerUsername==null?"":peerUsername;
@@ -776,6 +842,16 @@ public final class MainActivity extends Activity {
             return true;
         });
         refreshMessages(id,messages,history);
+        if(!"direct".equals(chatKind)){
+            requestGet("/chats/"+id,details->{
+                String role=details.optString("role","member");
+                boolean canPost=!"channel".equals(chatKind)||"owner".equals(role)||"admin".equals(role);
+                composer.setEnabled(canPost);
+                send.setEnabled(canPost);
+                composer.setHint(canPost?"Сообщение":"Публиковать могут только администраторы");
+                send.setAlpha(canPost?1f:.35f);
+            });
+        }
     }
 
     private void refreshMessages(long id,LinearLayout messages,ScrollView history){
