@@ -77,6 +77,8 @@ func (a *API) Routes() http.Handler {
 			r.Post("/chats/{chatID}/members/{userID}/role", a.setCommunityMemberRole)
 			r.Post("/chats/{chatID}/leave", a.leaveCommunityChat)
 			r.Post("/chats/{chatID}/transfer-ownership", a.transferCommunityOwnership)
+			r.Post("/chats/{chatID}/media", a.uploadChatMedia)
+			r.Get("/chats/{chatID}/media/{mediaID}", a.downloadChatMedia)
 			r.Get("/chats/{chatID}/messages", a.listChatMessages)
 			r.Get("/chats/{chatID}/read", a.getChatReadCursors)
 			r.Post("/chats/{chatID}/read", a.markChatRead)
