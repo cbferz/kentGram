@@ -64,3 +64,13 @@ scoped to the exact chat ID.
 `0005_groups_channels.sql` extends the chat-kind constraint and adds community
 metadata and member roles. Existing migrations are immutable; direct chats
 adopt the default empty metadata and `member` role.
+
+
+## Read receipts
+
+- `GET /api/v1/chats/{chatID}/read` returns a member-to-message read cursor map.
+- `POST /api/v1/chats/{chatID}/read` accepts
+  `{"last_read_message_id": 123}` and advances the caller's cursor monotonically.
+- A read cursor is clamped to the latest non-deleted message in that chat.
+- Merely fetching message history does not mark messages as read.
+- Advancing a cursor emits a `chat.read` WebSocket event to the chat's current members.
