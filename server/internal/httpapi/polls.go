@@ -38,6 +38,16 @@ func (a *API) createPoll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w,http.StatusCreated,p)
 }
 
+
+func (a *API) listPolls(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(chi.URLParam(r,"chatID"),10,64)
+	if err != nil || chatID<=0 { writeError(w,http.StatusBadRequest,"invalid_chat_id"); return }
+	polls,err:=a.db.ListPolls(r.Context(),chatID,userID(r),50)
+	if errors.Is(err,store.ErrNotFound) { writeError(w,http.StatusNotFound,"chat_not_found"); return }
+	if err!=nil { writeError(w,http.StatusInternalServerError,"polls_load_failed"); return }
+	writeJSON(w,http.StatusOK,map[string]any{"polls":polls})
+}
+
 func (a *API) getPoll(w http.ResponseWriter, r *http.Request) {
 	chatID, e1 := strconv.ParseInt(chi.URLParam(r,"chatID"),10,64)
 	pollID, e2 := strconv.ParseInt(chi.URLParam(r,"pollID"),10,64)
