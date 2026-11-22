@@ -48,10 +48,10 @@ func (a *API) uploadAvatar(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_or_too_large_avatar")
 		return
 	}
-	format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil || (format.Width < 1 || format.Height < 1) ||
-		format.Width > 4096 || format.Height > 4096 ||
-		int64(format.Width)*int64(format.Height) > 12_000_000 {
+	dimensions, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || (dimensions.Width < 1 || dimensions.Height < 1) ||
+		dimensions.Width > 4096 || dimensions.Height > 4096 ||
+		int64(dimensions.Width)*int64(dimensions.Height) > 12_000_000 {
 		writeError(w, http.StatusBadRequest, "unsupported_or_invalid_image")
 		return
 	}
