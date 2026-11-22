@@ -33,7 +33,12 @@ func TestChatReadCursorIsScopedAndMonotonic(t *testing.T) {
 	beforeAck := call(t, h, http.MethodGet, fmt.Sprintf("/api/v1/chats/%d/read", chatID), owner.Access, nil)
 	expectStatus(t, beforeAck, http.StatusOK)
 	beforeCursors, ok := asMap(t, beforeAck)["read_cursors"].(map[string]any)
-	if !ok || beforeCursors[fmt.Sprint(peer.ID)].(float64) != 0 {
+	if !ok {
+		t.Fatal("read_cursors is not an object before acknowledgement")
+	}
+	beforeCursor, exists := beforeCursors[fmt.Sprint(peer.ID)]
+	beforeCursorValue, numeric := beforeCursor.(float64)
+	if !exists || !numeric || beforeCursorValue != 0 {
 		t.Fatal("loading messages unexpectedly advanced the read cursor")
 	}
 
