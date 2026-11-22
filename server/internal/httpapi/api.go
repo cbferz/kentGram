@@ -46,7 +46,7 @@ func (a *API) Routes() http.Handler {
 		r.Use(a.apiLimiter.middleware)
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Timeout(20*time.Second), a.authenticate)
+			r.Use(a.authenticate)
 			r.Get("/realtime", a.realtime)
 		})
 
@@ -58,7 +58,7 @@ func (a *API) Routes() http.Handler {
 		})
 
 		r.Group(func(r chi.Router) {
-			r.Use(a.authenticate)
+			r.Use(middleware.Timeout(20*time.Second), a.authenticate)
 
 			r.Post("/auth/logout", a.logout)
 			r.Get("/sessions", a.listSessions)
