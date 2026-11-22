@@ -112,7 +112,7 @@ public final class ProfileActivity extends Activity {
                 pick.setType("image/*");
                 startActivityForResult(pick,PICK_AVATAR);
             });
-            TextView hint=label("JPEG или PNG · до 5 МБ. После загрузки ссылка останется постоянной.",12,MUTED,false);            TextView hint=label("Пока поддерживается ссылка на изображение HTTPS. Загрузка фото с устройства появится следующим этапом.",12,MUTED,false);
+            TextView hint=label("JPEG или PNG · до 5 МБ. После загрузки ссылка останется постоянной.",12,MUTED,false);
             hint.setPadding(0,0,0,dp(12));
             card.addView(hint);
             saveButton=button("Сохранить изменения");
