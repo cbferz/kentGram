@@ -109,7 +109,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(q.Username)
 	if !usernamePattern.MatchString(username) {
 		// Use the same generic credential error as an unknown account.
-		_, _ = bcrypt.CompareHashAndPassword(dummyHash, []byte(q.Password))
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(q.Password))
 		securityEvent(r, "login_failed")
 		writeError(w, http.StatusUnauthorized, "invalid_credentials")
 		return
