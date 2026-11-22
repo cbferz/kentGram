@@ -94,12 +94,12 @@ public final class ProfileActivity extends Activity {
             card.setPadding(dp(16),dp(12),dp(16),dp(14));
             card.setBackground(round(PANEL,22));
             content.addView(card);
-            section("Имя пользователя");
-            section("Отображаемое имя");
+            section(card,"Имя пользователя");
+            section(card,"Отображаемое имя");
             card.addView(displayName);
-            section("О себе");
+            section(card,"О себе");
             card.addView(bio);
-            section("Аватар");
+            section(card,"Аватар");
             card.addView(avatarUrl);
             TextView hint=label("Пока поддерживается ссылка на изображение HTTPS. Загрузка фото с устройства появится следующим этапом.",12,MUTED,false);
             hint.setPadding(0,0,0,dp(12));
@@ -113,11 +113,11 @@ public final class ProfileActivity extends Activity {
             card.setPadding(dp(16),dp(12),dp(16),dp(14));
             card.setBackground(round(PANEL,22));
             content.addView(card);
-            section("Имя пользователя");
+            section(card,"Имя пользователя");
             card.addView(label("@"+username,15,MUTED,true));
             section("Имя");
             card.addView(displayName);
-            section("О себе");
+            section(card,"О себе");
             card.addView(bio);
             displayName.setEnabled(false);
             bio.setEnabled(false);
@@ -200,7 +200,8 @@ public final class ProfileActivity extends Activity {
         });
     }
 
-    private void section(String s){TextView t=label(s,13,MUTED,true);t.setPadding(0,dp(8),0,dp(5));content.addView(t);}
+    private void section(String s){section(content,s);}
+    private void section(LinearLayout parent,String s){TextView t=label(s,11,MUTED,true);t.setLetterSpacing(.08f);t.setPadding(dp(2),dp(9),0,dp(5));parent.addView(t);}
     private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(0xFF778397);e.setHint(hint);e.setTextSize(14);e.setPadding(dp(13),dp(10),dp(13),dp(10));e.setBackground(round(0xFF1A2230,13));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);e.setLayoutParams(p);return e;}
     private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setBackground(round(BLUE,25));return b;}
     private TextView label(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);if(bold)t.setTypeface(null,Typeface.BOLD);return t;}
