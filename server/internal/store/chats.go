@@ -86,7 +86,7 @@ func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int
     if limit < 1 || limit > 100 { limit = 50 }
     rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,'')
         FROM messages m JOIN users u ON u.id=m.sender_id
-        LEFT JOIN messages reply ON reply.id=m.reply_to_message_id AND reply.chat_id=m.chat_id
+        LEFT JOIN messages reply ON reply.id=m.reply_to_message_id AND reply.chat_id=m.chat_id AND reply.deleted_at IS NULL
         LEFT JOIN users reply_user ON reply_user.id=reply.sender_id
         WHERE m.chat_id=$1 AND m.deleted_at IS NULL AND ($3=0 OR m.id<$3)
         ORDER BY m.id DESC LIMIT $4`,chatID,viewerID,beforeID,limit)
