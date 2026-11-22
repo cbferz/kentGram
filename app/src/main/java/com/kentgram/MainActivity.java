@@ -130,56 +130,193 @@ public final class MainActivity extends Activity {
     }
     private void showContacts(){
         base("Контакты");
-        TextView heading=label("Мои контакты",17,TEXT,true);content.addView(heading);
-        LinearLayout contactsList=new LinearLayout(this);contactsList.setOrientation(1);content.addView(contactsList);
+        TextView heading=label("Люди",18,TEXT,true);
+        content.addView(heading);
+        TextView sub=label("Находи знакомых и начинай общение.",13,MUTED,false);
+        LinearLayout.LayoutParams subp=new LinearLayout.LayoutParams(-1,-2);
+        subp.topMargin=dp(4);
+        subp.bottomMargin=dp(14);
+        content.addView(sub,subp);
+
+        LinearLayout searchBox=new LinearLayout(this);
+        searchBox.setGravity(Gravity.CENTER_VERTICAL);
+        searchBox.setPadding(dp(12),0,dp(8),0);
+        searchBox.setBackground(round(PANEL,17));
+        EditText query=field("Имя или @username");
+        query.setSingleLine(true);
+        query.setBackgroundColor(Color.TRANSPARENT);
+        query.setLayoutParams(new LinearLayout.LayoutParams(0,dp(50),1));
+        searchBox.addView(query);
+        TextView search=label("⌕",25,ACCENT,true);
+        search.setGravity(Gravity.CENTER);
+        searchBox.addView(search,new LinearLayout.LayoutParams(dp(42),dp(46)));
+        content.addView(searchBox);
+
+        LinearLayout results=new LinearLayout(this);
+        results.setOrientation(1);
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);
+        rp.topMargin=dp(8);
+        content.addView(results,rp);
+
+        TextView contactsTitle=label("Мои контакты",15,TEXT,true);
+        contactsTitle.setPadding(0,dp(18),0,dp(9));
+        content.addView(contactsTitle);
+        LinearLayout contactsList=new LinearLayout(this);
+        contactsList.setOrientation(1);
+        content.addView(contactsList);
         requestGet("/contacts",r->{
-            contactsList.removeAllViews();JSONArray contacts=r.optJSONArray("contacts");
-            if(contacts==null||contacts.length()==0){contactsList.addView(label("Пока нет контактов. Найди пользователя ниже и открой его профиль, чтобы подписаться.",13,MUTED,false));}
-            else for(int i=0;i<contacts.length();i++){
-                JSONObject u=contacts.optJSONObject(i);if(u==null)continue;
+            contactsList.removeAllViews();
+            JSONArray contacts=r.optJSONArray("contacts");
+            if(contacts==null||contacts.length()==0){
+                TextView empty=label("Контактов пока нет. Найди человека через поиск выше и открой его профиль.",13,MUTED,false);
+                empty.setPadding(dp(14),dp(16),dp(14),dp(16));
+                empty.setBackground(round(PANEL,18));
+                contactsList.addView(empty);
+            } else for(int i=0;i<contacts.length();i++){
+                JSONObject u=contacts.optJSONObject(i);
+                if(u==null)continue;
                 String username=u.optString("username"),name=u.optString("display_name");
-                LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(13),dp(10),dp(13),dp(10));card.setBackground(round(PANEL,13));
-                card.addView(label(name.isEmpty()?"@"+username:name,15,TEXT,true));
-                card.addView(label("@"+username,12,MUTED,false));
-                Button open=button("Профиль");card.addView(open);
+                String display=name.isEmpty()?"@"+username:name;
+                LinearLayout card=new LinearLayout(this);
+                card.setGravity(Gravity.CENTER_VERTICAL);
+                card.setPadding(dp(12),dp(10),dp(12),dp(10));
+                card.setBackground(round(PANEL,18));
+                TextView avatar=label(display.substring(0,1).toUpperCase(),17,0xFFEAF0FF,true);
+                avatar.setGravity(Gravity.CENTER);
+                avatar.setBackground(round(0xFF283957,50));
+                card.addView(avatar,new LinearLayout.LayoutParams(dp(44),dp(44)));
+                LinearLayout info=new LinearLayout(this);
+                info.setOrientation(1);
+                info.setPadding(dp(11),0,0,0);
+                info.addView(label(display,14,TEXT,true));
+                info.addView(label("@"+username,12,MUTED,false));
+                card.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+                TextView open=label("›",25,ACCENT,true);
+                open.setGravity(Gravity.CENTER);
+                card.addView(open,new LinearLayout.LayoutParams(dp(30),dp(42)));
                 open.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
-                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(7);contactsList.addView(card,lp);
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+                lp.bottomMargin=dp(7);
+                contactsList.addView(card,lp);
+                card.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
             }
         });
-        TextView discover=label("Найти людей",17,TEXT,true);discover.setPadding(0,dp(18),0,dp(8));content.addView(discover);
-        EditText query=field("Имя или username");content.addView(query);
-        Button search=button("Найти пользователей");content.addView(search);
-        LinearLayout results=new LinearLayout(this);results.setOrientation(1);content.addView(results);
-        search.setOnClickListener(v->{
-            String q=query.getText().toString().trim();if(q.length()<2){toast("Введите минимум 2 символа");return;}
-            search.setEnabled(false);
+
+        Runnable doSearch=()->{
+            String q=query.getText().toString().trim();
+            if(q.length()<2){toast("Введите минимум 2 символа");return;}
             requestGet("/users/search?q="+enc(q),r->{
-                search.setEnabled(true);results.removeAllViews();JSONArray users=r.optJSONArray("users");
-                if(users==null||users.length()==0){results.addView(label("Ничего не найдено",14,MUTED,false));return;}
+                results.removeAllViews();
+                JSONArray users=r.optJSONArray("users");
+                if(users==null||users.length()==0){
+                    TextView empty=label("Ничего не найдено",13,MUTED,false);
+                    empty.setPadding(dp(12),dp(12),dp(12),dp(12));
+                    results.addView(empty);
+                    return;
+                }
                 for(int i=0;i<users.length();i++){
-                    JSONObject u=users.optJSONObject(i);if(u==null)continue;
+                    JSONObject u=users.optJSONObject(i);
+                    if(u==null)continue;
                     String username=u.optString("username"),name=u.optString("display_name");
-                    LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(13),dp(11),dp(13),dp(11));card.setBackground(round(PANEL,14));
-                    card.addView(label(name.isEmpty()?"@"+username:name,16,TEXT,true));
-                    card.addView(label("@"+username,13,MUTED,false));
-                    Button open=button("Открыть профиль");card.addView(open);
-                    open.setOnClickListener(x->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
-                    LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.bottomMargin=dp(8);results.addView(card,cp);
+                    String display=name.isEmpty()?"@"+username:name;
+                    LinearLayout card=new LinearLayout(this);
+                    card.setGravity(Gravity.CENTER_VERTICAL);
+                    card.setPadding(dp(12),dp(10),dp(12),dp(10));
+                    card.setBackground(round(PANEL_ALT,17));
+                    TextView avatar=label(display.substring(0,1).toUpperCase(),16,0xFFEAF0FF,true);
+                    avatar.setGravity(Gravity.CENTER);
+                    avatar.setBackground(round(0xFF283957,50));
+                    card.addView(avatar,new LinearLayout.LayoutParams(dp(42),dp(42)));
+                    LinearLayout info=new LinearLayout(this);
+                    info.setOrientation(1);
+                    info.setPadding(dp(10),0,0,0);
+                    info.addView(label(display,14,TEXT,true));
+                    info.addView(label("@"+username,12,MUTED,false));
+                    card.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+                    TextView open=label("Профиль  ›",12,ACCENT,true);
+                    card.addView(open);
+                    open.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
+                    LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
+                    cp.bottomMargin=dp(7);
+                    results.addView(card,cp);
+                    card.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
                 }
             });
-        });
+        };
+        search.setOnClickListener(v->doSearch.run());
+        query.setOnEditorActionListener((v,action,event)->{doSearch.run();return true;});
     }
+
     private void showFeed(){
         base("Лента");
-        content.addView(label("Публикации появятся следующим этапом",17,TEXT,true));
-        content.addView(label("Сейчас готовим API публикаций, реакции и комментарии. Пока здесь нет демонстрационных или выдуманных постов.",14,MUTED,false));
+        TextView heading=label("Твоя лента",19,TEXT,true);
+        content.addView(heading);
+        LinearLayout empty=new LinearLayout(this);
+        empty.setOrientation(1);
+        empty.setGravity(Gravity.CENTER);
+        empty.setPadding(dp(22),dp(38),dp(22),dp(38));
+        empty.setBackground(round(PANEL,22));
+        TextView mark=label("✦",34,ACCENT,true);
+        mark.setGravity(Gravity.CENTER);
+        empty.addView(mark);
+        TextView title=label("Пока ничего нового",16,TEXT,true);
+        title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-1,-2);
+        tp.topMargin=dp(12);
+        empty.addView(title,tp);
+        TextView hint=label("Когда появятся публикации от людей, на которых ты подписан, они будут здесь.",13,MUTED,false);
+        hint.setGravity(Gravity.CENTER);
+        hint.setLineSpacing(dp(3),1f);
+        LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(-1,-2);
+        hp.topMargin=dp(6);
+        empty.addView(hint,hp);
+        LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-1,-2);
+        ep.topMargin=dp(16);
+        content.addView(empty,ep);
     }
+
     private void showSettings(){
         base("Настройки");
-        content.addView(label("Аккаунт",13,MUTED,true));
-        Button profile=button("Мой профиль");content.addView(profile);profile.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));
-        Button logout=button("Выйти из аккаунта");content.addView(logout);
-        logout.setOnClickListener(v->{request("/auth/logout",new JSONObject(),true,r->{});prefs.edit().clear().apply();token="";showAuth();});
+        TextView heading=label("Аккаунт",11,MUTED,true);
+        heading.setLetterSpacing(.12f);
+        content.addView(heading);
+
+        LinearLayout profileCard=new LinearLayout(this);
+        profileCard.setGravity(Gravity.CENTER_VERTICAL);
+        profileCard.setPadding(dp(14),dp(13),dp(14),dp(13));
+        profileCard.setBackground(round(PANEL,19));
+        TextView avatar=label("●",20,ACCENT,true);
+        avatar.setGravity(Gravity.CENTER);
+        avatar.setBackground(round(0xFF263957,50));
+        profileCard.addView(avatar,new LinearLayout.LayoutParams(dp(46),dp(46)));
+        LinearLayout profileInfo=new LinearLayout(this);
+        profileInfo.setOrientation(1);
+        profileInfo.setPadding(dp(12),0,0,0);
+        profileInfo.addView(label("Мой профиль",15,TEXT,true));
+        profileInfo.addView(label("Имя, описание и аватар",12,MUTED,false));
+        profileCard.addView(profileInfo,new LinearLayout.LayoutParams(0,-2,1));
+        profileCard.addView(label("›",25,ACCENT,true));
+        content.addView(profileCard);
+        profileCard.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));
+
+        TextView general=label("ПРИЛОЖЕНИЕ",10,MUTED,true);
+        general.setLetterSpacing(.12f);
+        general.setPadding(dp(2),dp(22),0,dp(9));
+        content.addView(general);
+        LinearLayout logoutCard=new LinearLayout(this);
+        logoutCard.setGravity(Gravity.CENTER_VERTICAL);
+        logoutCard.setPadding(dp(14),dp(14),dp(14),dp(14));
+        logoutCard.setBackground(round(PANEL,18));
+        TextView logoutTitle=label("Выйти из аккаунта",14,0xFFFF8995,true);
+        logoutCard.addView(logoutTitle,new LinearLayout.LayoutParams(0,-2,1));
+        logoutCard.addView(label("↗",18,0xFFFF8995,true));
+        content.addView(logoutCard);
+        logoutCard.setOnClickListener(v->KentDialog.showMessage(this,"Выйти из аккаунта?","Тебе потребуется снова войти, чтобы пользоваться kentGram.","Выйти",()->{
+            request("/auth/logout",new JSONObject(),true,r->{});
+            prefs.edit().clear().apply();
+            token="";
+            showAuth();
+        }));
     }
 
     private void showAuth(){
