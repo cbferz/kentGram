@@ -26,7 +26,8 @@ final class MessageActionMenu {
     static void show(Activity activity, View anchor, String message,
                      boolean canDelete, boolean canEdit,
                      Runnable onDelete, Runnable onReply,
-                     Runnable onEdit, ReactionListener onReaction) {
+                     Runnable onEdit, ReactionListener onReaction,
+                     Runnable onForward, Runnable onPin) {
         if (activity == null || anchor == null || message == null) return;
 
         final String[] reactions = {
@@ -110,6 +111,16 @@ final class MessageActionMenu {
         addAction(activity, actions, "↩", "Ответить", 0xFF9AB5FF, () -> {
             popup.dismiss();
             if (onReply != null) onReply.run();
+        });
+
+        addAction(activity, actions, "➦", "Переслать", 0xFF9AB5FF, () -> {
+            popup.dismiss();
+            if (onForward != null) onForward.run();
+        });
+
+        addAction(activity, actions, "⌖", "Закрепить", 0xFF9AB5FF, () -> {
+            popup.dismiss();
+            if (onPin != null) onPin.run();
         });
 
         if (canEdit) {
