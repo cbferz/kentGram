@@ -27,8 +27,12 @@ public final class MainActivity extends Activity {
     private String token="";
     private LinearLayout root,content,top,navBar;
     private EditText composer;
+    private LinearLayout replyPreview;
+    private long replyToMessageId=0;
+    private String replyToBody="", replyToSender="";
     private long currentChat=0;
     private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
+    private final HashMap<Long,ArrayDeque<Long>> replyQueues=new HashMap<>();
     private final HashSet<Long> sendingChats=new HashSet<>();
 
     @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
@@ -376,7 +380,9 @@ public final class MainActivity extends Activity {
         root.removeViewAt(1);if(navBar!=null)root.removeView(navBar);
         Button back=button("‹ Чаты");back.setTextSize(13);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,-2);top.addView(back,bp);back.setOnClickListener(v->showChats());
         ScrollView history=new ScrollView(this);LinearLayout messages=new LinearLayout(this);messages.setOrientation(1);messages.setPadding(dp(10),dp(8),dp(10),dp(8));history.addView(messages);root.addView(history,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);bar.setPadding(dp(8),dp(7),dp(8),dp(7));bar.setBackgroundColor(PANEL);composer=field("Сообщение");bar.addView(composer,new LinearLayout.LayoutParams(0,-2,1));Button send=button("➤");send.setTextSize(16);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(58),dp(48));bar.addView(send,sp);root.addView(bar);
+        LinearLayout composerBox=new LinearLayout(this);composerBox.setOrientation(1);composerBox.setPadding(dp(8),dp(5),dp(8),dp(5));composerBox.setBackgroundColor(PANEL);
+        replyPreview=new LinearLayout(this);replyPreview.setOrientation(1);replyPreview.setPadding(dp(10),dp(7),dp(10),dp(7));replyPreview.setBackground(round(0xFF202A38,12));replyPreview.setVisibility(View.GONE);replyPreview.addView(label("Ответ на сообщение",12,0xFF76A7FF,true));TextView previewText=label("",13,TEXT,false);replyPreview.addView(previewText);replyPreview.setOnClickListener(v->clearReply());composerBox.addView(replyPreview,new LinearLayout.LayoutParams(-1,-2));
+        LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);composer=field("Сообщение");composer.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));bar.addView(composer);Button send=button("➤");send.setTextSize(16);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(58),dp(48));bar.addView(send,sp);composerBox.addView(bar);root.addView(composerBox);
         send.setOnClickListener(v->sendMessage(id,messages,history));composer.setOnEditorActionListener((v,a,e)->{sendMessage(id,messages,history);return true;});refreshMessages(id,messages,history);
     }
     private void refreshMessages(long id,LinearLayout messages,ScrollView history){
@@ -390,8 +396,10 @@ public final class MainActivity extends Activity {
                 boolean mine=m.optBoolean("is_mine");
                 long messageId=m.optLong("id",0);
                 String body=m.optString("body","");
-                LinearLayout row=new LinearLayout(this);
+                LinearLayout row=new LinearLayout(this);row.setTag(Long.valueOf(messageId));row.setOrientation(1);
                 row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
+                long replyId=m.optLong("reply_to_message_id",0);String quoted=m.optString("reply_to_body","");String quotedSender=m.optString("reply_to_sender_username","");
+                if(replyId>0){TextView quote=label((quotedSender.isEmpty()?"Ответ на сообщение":"Ответ на @"+quotedSender)+"\\n"+(quoted.isEmpty()?"Сообщение недоступно":quoted),12,MUTED,false);quote.setPadding(dp(9),dp(6),dp(9),dp(6));quote.setBackground(round(0xFF111925,10));LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(-2,-2);qp.setMargins(dp(2),dp(4),dp(2),0);row.addView(quote,qp);quote.setOnClickListener(v->scrollToMessage(messages,history,replyId));}
                 TextView bubble=label(body,15,TEXT,false);
                 bubble.setPadding(dp(13),dp(9),dp(13),dp(9));
                 bubble.setBackground(round(mine?0xFF17466A:0xFF202A38,16));
@@ -400,7 +408,8 @@ public final class MainActivity extends Activity {
                 row.addView(bubble,p);
                 bubble.setOnLongClickListener(v->{
                     MessageActionMenu.show(this,bubble,body,mine,
-                            ()->confirmDeleteMessage(id,messageId,messages,history));
+                            ()->confirmDeleteMessage(id,messageId,messages,history),
+                            ()->setReply(messageId,body,m.optString("sender_username","")));
                     return true;
                 });
                 messages.addView(row);
@@ -408,6 +417,17 @@ public final class MainActivity extends Activity {
             history.post(()->history.fullScroll(View.FOCUS_DOWN));
         });
     }
+
+    private void setReply(long messageId,String body,String sender){
+        replyToMessageId=messageId;replyToBody=body;replyToSender=sender;
+        if(replyPreview!=null){replyPreview.removeAllViews();replyPreview.addView(label(sender.isEmpty()?"Ответ на сообщение":"Ответ на @"+sender,12,0xFF76A7FF,true));replyPreview.addView(label(body,13,TEXT,false));replyPreview.setVisibility(View.VISIBLE);}
+    }
+    private void clearReply(){replyToMessageId=0;replyToBody="";replyToSender="";if(replyPreview!=null)replyPreview.setVisibility(View.GONE);}
+    private void scrollToMessage(LinearLayout messages,ScrollView history,long targetID){
+        for(int i=0;i<messages.getChildCount();i++){View child=messages.getChildAt(i);Object tag=child.getTag();if(tag instanceof Long&&((Long)tag)==targetID){history.smoothScrollTo(0,child.getTop());child.setBackground(round(0xFF263B55,12));return;}}
+        toast("Исходное сообщение не загружено");
+    }
+
     private void confirmDeleteMessage(long chatId,long messageId,LinearLayout messages,ScrollView history){
         if(messageId<=0)return;
         KentDialog.showMessage(this,"Удалить сообщение?",
@@ -423,9 +443,10 @@ public final class MainActivity extends Activity {
         String text=composer.getText().toString().trim();
         if(text.isEmpty())return;
         ArrayDeque<String> queue=sendQueues.computeIfAbsent(id,k->new ArrayDeque<>());
+        ArrayDeque<Long> replyQueue=replyQueues.computeIfAbsent(id,k->new ArrayDeque<>());
         // A failed head remains queued. Tapping send with that same restored draft retries it
         // instead of creating a duplicate message.
-        if(queue.isEmpty()||!queue.peekFirst().equals(text)||sendingChats.contains(id))queue.addLast(text);
+        if(queue.isEmpty()||!queue.peekFirst().equals(text)||sendingChats.contains(id)){queue.addLast(text);replyQueue.addLast(replyToMessageId);clearReply();}
         composer.setText("");
         pumpSendQueue(id,messages,history);
     }
@@ -434,15 +455,17 @@ public final class MainActivity extends Activity {
         ArrayDeque<String> queue=sendQueues.get(id);
         if(queue==null||queue.isEmpty())return;
         String text=queue.peekFirst();
+        ArrayDeque<Long> replyQueue=replyQueues.get(id);long replyID=replyQueue==null||replyQueue.isEmpty()?0:replyQueue.peekFirst();
         sendingChats.add(id);
         JSONObject body=new JSONObject();
-        try{body.put("text",text);}catch(Exception ignored){}
+        try{body.put("text",text);if(replyID>0)body.put("reply_to_message_id",replyID);}catch(Exception ignored){}
         request("/chats/"+id+"/messages",body,true,
             response->{
                 ArrayDeque<String> pending=sendQueues.get(id);
                 if(pending!=null&&!pending.isEmpty())pending.removeFirst();
+                ArrayDeque<Long> pendingReplies=replyQueues.get(id);if(pendingReplies!=null&&!pendingReplies.isEmpty())pendingReplies.removeFirst();
                 sendingChats.remove(id);
-                if(pending!=null&&pending.isEmpty())sendQueues.remove(id);
+                if(pending!=null&&pending.isEmpty()){sendQueues.remove(id);replyQueues.remove(id);}
                 if(pending!=null&&!pending.isEmpty())pumpSendQueue(id,messages,history);
                 else refreshMessages(id,messages,history);
             },

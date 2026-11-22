@@ -19,7 +19,7 @@ final class MessageActionMenu {
     private MessageActionMenu() {}
 
     static void show(Activity activity, View anchor, String message,
-                     boolean canDelete, Runnable onDelete) {
+                     boolean canDelete, Runnable onDelete, Runnable onReply) {
         if (activity == null || anchor == null || message == null) return;
 
         View decor = activity.getWindow().getDecorView();
@@ -41,7 +41,7 @@ final class MessageActionMenu {
         background.setStroke(dp(activity, 1), 0xFF35465D);
         menu.setBackground(background);
 
-        PopupWindow popup = new PopupWindow(menu, dp(activity, canDelete ? 240 : 130),
+        PopupWindow popup = new PopupWindow(menu, dp(activity, canDelete ? 300 : 190),
                 dp(activity, 56), true);
         popup.setBackgroundDrawable(background);
         popup.setOutsideTouchable(true);
@@ -58,6 +58,10 @@ final class MessageActionMenu {
             }
             popup.dismiss();
         });
+
+        TextView reply = action(activity, "Ответить", 0xFF76A7FF);
+        menu.addView(reply, new LinearLayout.LayoutParams(0, -1, 1));
+        reply.setOnClickListener(v -> { popup.dismiss(); if (onReply != null) onReply.run(); });
 
         if (canDelete) {
             View separator = new View(activity);
@@ -78,7 +82,7 @@ final class MessageActionMenu {
         int[] location = new int[2];
         anchor.getLocationOnScreen(location);
         int x = Math.max(dp(activity, 12),
-                location[0] + anchor.getWidth() / 2 - dp(activity, canDelete ? 120 : 65));
+                location[0] + anchor.getWidth() / 2 - dp(activity, canDelete ? 150 : 95));
         int y = Math.max(dp(activity, 28), location[1] - dp(activity, 68));
         popup.showAtLocation(decor, Gravity.TOP | Gravity.LEFT, x, y);
         if (frame != null) dim.setOnClickListener(v -> popup.dismiss());
