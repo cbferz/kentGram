@@ -817,7 +817,15 @@ public final class MainActivity extends Activity {
         peerBlock.addView(peerTitle);
         peerBlock.addView(label(activePeerUsername.isEmpty()?"переписка":"@"+activePeerUsername,11,MUTED,false));
         top.addView(peerBlock,new LinearLayout.LayoutParams(0,-2,1));
-        View.OnClickListener openPeer=v->{if(!activePeerUsername.isEmpty()){Intent profile=new Intent(this,ProfileActivity.class);profile.putExtra("username",activePeerUsername);startActivity(profile);}};
+        View.OnClickListener openPeer=v->{
+            if(!activePeerUsername.isEmpty()){
+                Intent profile=new Intent(this,ProfileActivity.class);
+                profile.putExtra("username",activePeerUsername);
+                startActivity(profile);
+            }else if(!"direct".equals(chatKind)){
+                showCommunityDetails(id,chatKind);
+            }
+        };
         peerBlock.setOnClickListener(openPeer);
         peerAvatar.setOnClickListener(openPeer);
 
@@ -883,6 +891,115 @@ public final class MainActivity extends Activity {
                 send.setAlpha(canPost?1f:.35f);
             });
         }
+    }
+
+    private void showCommunityDetails(long chatId,String chatKind){
+        requestGet("/chats/"+chatId,details->{
+            String title=details.optString("title","Сообщество");
+            String description=details.optString("description","");
+            String role=details.optString("role","member");
+            long count=details.optLong("member_count",0);
+            LinearLayout panel=new LinearLayout(this);
+            panel.setOrientation(1);
+            panel.setPadding(dp(18),dp(8),dp(18),dp(4));
+            TextView summary=label((description.isEmpty()?"":description+"\n")+"Участников: "+count+"\nВаша роль: "+role,13,MUTED,false);
+            panel.addView(summary);
+            Button members=new Button(this);
+            members.setText("Участники");
+            panel.addView(members);
+            members.setOnClickListener(v->loadCommunityMembers(chatId));
+            if("owner".equals(role)||"admin".equals(role)){
+                Button invite=new Button(this);
+                invite.setText("Пригласить пользователя");
+                panel.addView(invite);
+                invite.setOnClickListener(v->showInviteCommunityMember(chatId));
+            }
+            if("owner".equals(role)){
+                Button transfer=new Button(this);
+                transfer.setText("Передать владельца");
+                panel.addView(transfer);
+                transfer.setOnClickListener(v->showTransferCommunityOwnership(chatId));
+            }
+            Button leave=new Button(this);
+            leave.setText("Покинуть сообщество");
+            panel.addView(leave);
+            leave.setOnClickListener(v->{
+                request("/chats/"+chatId+"/leave",new JSONObject(),true,result->{
+                    cachedChats=null;
+                    showChats();
+                    toast("Вы покинули сообщество");
+                },(error,status)->toast(status==409?"Сначала передайте права владельца":"Не удалось выйти"));
+            });
+            new AlertDialog.Builder(this).setTitle(title).setView(panel).setPositiveButton("Закрыть",null).show();
+        });
+    }
+
+    private void loadCommunityMembers(long chatId){
+        requestGet("/chats/"+chatId+"/members",result->{
+            JSONArray members=result.optJSONArray("members");
+            if(members==null||members.length()==0){toast("Участников пока нет");return;}
+            String[] labels=new String[members.length()];
+            for(int i=0;i<members.length();i++){
+                JSONObject member=members.optJSONObject(i);
+                if(member==null){labels[i]="Участник";continue;}
+                String display=member.optString("display_name","");
+                String username=member.optString("username","");
+                String name=display.isEmpty()?"@"+username:display+" (@"+username+")";
+                labels[i]=name+" · "+member.optString("role","member");
+            }
+            new AlertDialog.Builder(this).setTitle("Участники").setItems(labels,null).setPositiveButton("Закрыть",null).show();
+        });
+    }
+
+    private void showInviteCommunityMember(long chatId){
+        EditText username=field("@username пользователя");
+        username.setSingleLine(true);
+        new AlertDialog.Builder(this).setTitle("Пригласить участника").setView(username)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Найти",(dialog,which)->{
+                    String handle=username.getText().toString().trim().replace("@","");
+                    if(handle.length()<2){toast("Введите username");return;}
+                    requestGet("/users/search?q="+enc(handle),result->{
+                        JSONArray users=result.optJSONArray("users");
+                        JSONObject found=null;
+                        if(users!=null)for(int i=0;i<users.length();i++){
+                            JSONObject candidate=users.optJSONObject(i);
+                            if(candidate!=null&&handle.equalsIgnoreCase(candidate.optString("username"))){found=candidate;break;}
+                        }
+                        if(found==null){toast("Пользователь не найден");return;}
+                        JSONObject body=new JSONObject();
+                        try{body.put("user_id",found.optLong("id"));}catch(JSONException ignored){}
+                        request("/chats/"+chatId+"/members",body,true,added->{
+                            toast("Участник добавлен");
+                            showCommunityDetails(chatId,"group");
+                        });
+                    });
+                }).show();
+    }
+
+    private void showTransferCommunityOwnership(long chatId){
+        EditText username=field("@username нового владельца");
+        username.setSingleLine(true);
+        new AlertDialog.Builder(this).setTitle("Передать владение").setView(username)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Передать",(dialog,which)->{
+                    String handle=username.getText().toString().trim().replace("@","");
+                    requestGet("/users/search?q="+enc(handle),result->{
+                        JSONArray users=result.optJSONArray("users");
+                        JSONObject found=null;
+                        if(users!=null)for(int i=0;i<users.length();i++){
+                            JSONObject candidate=users.optJSONObject(i);
+                            if(candidate!=null&&handle.equalsIgnoreCase(candidate.optString("username"))){found=candidate;break;}
+                        }
+                        if(found==null){toast("Пользователь не найден");return;}
+                        JSONObject body=new JSONObject();
+                        try{body.put("user_id",found.optLong("id"));}catch(JSONException ignored){}
+                        request("/chats/"+chatId+"/transfer-ownership",body,true,result2->{
+                            toast("Владелец изменён");
+                            showCommunityDetails(chatId,"group");
+                        });
+                    });
+                }).show();
     }
 
     private void refreshMessages(long id,LinearLayout messages,ScrollView history){
