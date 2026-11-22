@@ -937,6 +937,10 @@ public final class MainActivity extends Activity {
             picker.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/jpeg","image/png","application/pdf"});
             startActivityForResult(picker,REQUEST_PICK_CHAT_MEDIA);
         });
+        TextView pollAction=label("☷",21,ACCENT,true);
+        pollAction.setGravity(Gravity.CENTER);
+        bar.addView(pollAction,new LinearLayout.LayoutParams(dp(38),dp(44)));
+        pollAction.setOnClickListener(v->showCreatePollDialog(id,messages,history));
         TextView send=label("➤",19,Color.WHITE,true);
         send.setGravity(Gravity.CENTER);
         send.setBackground(round(ACCENT,50));
@@ -974,6 +978,8 @@ public final class MainActivity extends Activity {
                 boolean canPost=!"channel".equals(chatKind)||"owner".equals(role)||"admin".equals(role);
                 composer.setEnabled(canPost);
                 send.setEnabled(canPost);
+                pollAction.setEnabled(canPost);
+                pollAction.setAlpha(canPost?1f:.35f);
                 attach.setEnabled(canPost);
                 attach.setAlpha(canPost?1f:.35f);
                 composer.setHint(canPost?"Сообщение":"Публиковать могут только администраторы");
@@ -1236,6 +1242,7 @@ public final class MainActivity extends Activity {
                 });
                 messages.addView(row);
             }
+            loadPollCards(id,messages,history);
             history.post(()->history.fullScroll(View.FOCUS_DOWN));
             if(latestMessageId>0){
                 JSONObject readBody=new JSONObject();
@@ -1246,6 +1253,143 @@ public final class MainActivity extends Activity {
         });
     }
 
+
+
+    private void showCreatePollDialog(long chatId,LinearLayout messages,ScrollView history){
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(1);
+        panel.setPadding(dp(18),dp(8),dp(18),0);
+        EditText question=field("Вопрос опроса");
+        question.setSingleLine(true);
+        panel.addView(question);
+        EditText[] options=new EditText[4];
+        for(int i=0;i<4;i++){
+            options[i]=field("Вариант "+(i+1));
+            options[i].setSingleLine(true);
+            panel.addView(options[i]);
+        }
+        CheckBox multiple=new CheckBox(this);
+        multiple.setText("Можно выбрать несколько вариантов");
+        multiple.setTextColor(TEXT);
+        panel.addView(multiple);
+        CheckBox anonymous=new CheckBox(this);
+        anonymous.setText("Анонимный опрос");
+        anonymous.setTextColor(TEXT);
+        anonymous.setChecked(true);
+        panel.addView(anonymous);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Новый опрос").setView(panel)
+                .setNegativeButton("Отмена",null).setPositiveButton("Создать",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{
+            String title=question.getText().toString().trim();
+            JSONArray values=new JSONArray();
+            for(EditText option:options){
+                String value=option.getText().toString().trim();
+                if(!value.isEmpty())values.put(value);
+            }
+            if(title.isEmpty()||values.length()<2){
+                toast("Укажите вопрос и минимум два варианта");
+                return;
+            }
+            JSONObject body=new JSONObject();
+            try{
+                body.put("question",title);
+                body.put("options",values);
+                body.put("multiple_choice",multiple.isChecked());
+                body.put("anonymous",anonymous.isChecked());
+            }catch(JSONException ignored){}
+            request("/chats/"+chatId+"/polls",body,true,result->{
+                dialog.dismiss();
+                refreshMessages(chatId,messages,history);
+                toast("Опрос опубликован");
+            },(error,status)->toast(error.optString("error","Не удалось создать опрос")));
+        }));
+        dialog.show();
+    }
+
+    private void loadPollCards(long chatId,LinearLayout messages,ScrollView history){
+        requestGet("/chats/"+chatId+"/polls",result->{
+            if(currentChat!=chatId)return;
+            JSONArray polls=result.optJSONArray("polls");
+            if(polls==null||polls.length()==0)return;
+            TextView section=label("ОПРОСЫ",11,MUTED,true);
+            section.setPadding(dp(4),dp(14),dp(4),dp(7));
+            messages.addView(section);
+            for(int i=0;i<polls.length();i++){
+                JSONObject poll=polls.optJSONObject(i);
+                if(poll==null)continue;
+                LinearLayout card=new LinearLayout(this);
+                card.setOrientation(1);
+                card.setPadding(dp(14),dp(12),dp(14),dp(12));
+                card.setBackground(round(PANEL,18));
+                LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
+                cp.setMargins(dp(2),dp(5),dp(2),dp(8));
+                messages.addView(card,cp);
+                card.addView(label(poll.optString("question","Опрос"),15,TEXT,true));
+                card.addView(label((poll.optBoolean("closed")?"Завершён · ":"")+
+                        poll.optLong("total_votes",0)+" голосов"+
+                        (poll.optBoolean("anonymous")?" · анонимно":""),11,MUTED,false));
+                JSONArray options=poll.optJSONArray("options");
+                if(options==null)continue;
+                boolean multi=poll.optBoolean("multiple_choice");
+                RadioGroup radio=new RadioGroup(this);
+                radio.setOrientation(RadioGroup.VERTICAL);
+                ArrayList<CheckBox> checks=new ArrayList<>();
+                for(int j=0;j<options.length();j++){
+                    JSONObject option=options.optJSONObject(j);
+                    if(option==null)continue;
+                    long optionID=option.optLong("id");
+                    String labelText=option.optString("text")+"  ·  "+option.optLong("votes");
+                    if(multi){
+                        CheckBox check=new CheckBox(this);
+                        check.setText(labelText);
+                        check.setTextColor(TEXT);
+                        check.setTag(Long.valueOf(optionID));
+                        check.setChecked(option.optBoolean("selected"));
+                        checks.add(check);
+                        card.addView(check);
+                    }else{
+                        RadioButton choice=new RadioButton(this);
+                        choice.setText(labelText);
+                        choice.setTextColor(TEXT);
+                        choice.setTag(Long.valueOf(optionID));
+                        radio.addView(choice);
+                        if(option.optBoolean("selected"))choice.setChecked(true);
+                    }
+                }
+                if(!multi)card.addView(radio);
+                if(!poll.optBoolean("closed")){
+                    TextView vote=label("Проголосовать",13,Color.WHITE,true);
+                    vote.setGravity(Gravity.CENTER);
+                    vote.setPadding(dp(14),dp(10),dp(14),dp(10));
+                    vote.setBackground(round(ACCENT,18));
+                    LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(-1,-2);
+                    vp.topMargin=dp(8);
+                    card.addView(vote,vp);
+                    vote.setOnClickListener(v->{
+                        JSONArray selected=new JSONArray();
+                        if(multi){
+                            for(CheckBox check:checks)if(check.isChecked()&&check.getTag() instanceof Long)
+                                selected.put((Long)check.getTag());
+                        }else{
+                            int checked=radio.getCheckedRadioButtonId();
+                            RadioButton choice=radio.findViewById(checked);
+                            if(choice!=null&&choice.getTag() instanceof Long)selected.put((Long)choice.getTag());
+                        }
+                        if(selected.length()==0){toast("Выберите вариант");return;}
+                        JSONObject body=new JSONObject();
+                        try{body.put("option_ids",selected);}catch(JSONException ignored){}
+                        vote.setEnabled(false);
+                        request("/chats/"+chatId+"/polls/"+poll.optLong("id")+"/vote",body,true,result->{
+                            refreshMessages(chatId,messages,history);
+                        },(error,status)->{
+                            vote.setEnabled(true);
+                            toast(error.optString("error","Не удалось проголосовать"));
+                        });
+                    });
+                }
+            }
+        });
+    }
 
     private void showEditMessage(long chatId,long messageId,String oldText,
                                  LinearLayout messages,ScrollView history){
