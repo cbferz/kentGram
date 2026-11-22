@@ -1,4 +1,12 @@
 services:
+  web:
+    build:
+      context: ./web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8080"
+    mem_limit: 64m
+
   api:
     build:
       context: ./server
