@@ -2,10 +2,7 @@ package store
 
 import (
 	"context"
-	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type ChatMember struct {
@@ -157,6 +154,3 @@ func (s *Store) CommunityChat(ctx context.Context, chatID, viewerID int64) (Comm
 		Scan(&c.ID,&c.Kind,&c.Title,&c.Description,&c.IsPublic,&c.Username,&c.Role,&c.MemberCount,&c.CreatedAt)
 	return c, norm(err)
 }
-
-var _ = strings.TrimSpace
-var _ = pgx.ErrNoRows
