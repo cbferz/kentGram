@@ -181,7 +181,7 @@ func (a *API) downloadChatMedia(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", media.ContentType)
 	w.Header().Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": media.OriginalName}))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, media.OriginalName, info.ModTime().Round(time.Second), file)
 }
