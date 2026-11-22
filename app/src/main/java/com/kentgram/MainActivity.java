@@ -1349,6 +1349,7 @@ public final class MainActivity extends Activity {
                         card.addView(check);
                     }else{
                         RadioButton choice=new RadioButton(this);
+                        choice.setId(View.generateViewId());
                         choice.setText(labelText);
                         choice.setTextColor(TEXT);
                         choice.setTag(Long.valueOf(optionID));
@@ -1756,6 +1757,9 @@ public final class MainActivity extends Activity {
                 if("chat.pinned".equals(type)||"chat.unpinned".equals(type)){
                     if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null)
                         updatePinnedBanner(chatId,activeMessages,activeHistory);
+                }else if("poll.created".equals(type)||"poll.updated".equals(type)||"poll.closed".equals(type)){
+                    if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null)
+                        refreshMessages(chatId,activeMessages,activeHistory);
                 }else if("message.created".equals(type)||"message.deleted".equals(type)){
                     cachedChats=null;
                     if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null){
