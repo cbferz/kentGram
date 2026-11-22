@@ -18,7 +18,7 @@ import java.util.concurrent.Executors;
 
 public final class ProfileActivity extends Activity {
     private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
-    private static final int BG=0xFF0D1118,PANEL=0xFF151C27,TEXT=0xFFF4F7FB,MUTED=0xFF9AA9BC,BLUE=0xFF17649A;
+    private static final int BG=0xFF090B10,PANEL=0xFF121720,TEXT=0xFFF4F6FA,MUTED=0xFF8994A6,BLUE=0xFF648DFF;
     private final ExecutorService io=Executors.newFixedThreadPool(2);
     private String token="", username="";
     private boolean own, following;
@@ -41,29 +41,96 @@ public final class ProfileActivity extends Activity {
     }
 
     private void build() {
-        LinearLayout root=new LinearLayout(this); root.setOrientation(1); root.setBackgroundColor(BG);
-        LinearLayout header=new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(16),dp(10),dp(16),dp(10)); header.setBackgroundColor(PANEL);
-        Button back=button("‹"); back.setTextSize(20); header.addView(back,new LinearLayout.LayoutParams(dp(52),dp(48))); back.setOnClickListener(v->finish());
-        TextView title=label(own?"Мой профиль":"Профиль",21,TEXT,true); LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(0,-2,1);tp.leftMargin=dp(10);header.addView(title,tp);root.addView(header);
-        ScrollView scroll=new ScrollView(this);content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(18),dp(22),dp(18),dp(24));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
-        avatar=new ImageView(this);avatar.setImageDrawable(getDrawable(android.R.drawable.sym_def_app_icon));avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);avatar.setBackground(round(PANEL,100));avatar.setClipToOutline(true);
-        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(112),dp(112));ap.gravity=Gravity.CENTER;ap.bottomMargin=dp(14);content.addView(avatar,ap);
-        displayName=field("Имя"); bio=field("О себе — до 160 символов"); avatarUrl=field("HTTPS-ссылка на аватар");
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(1);
+        root.setBackgroundColor(BG);
+
+        LinearLayout header=new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(18),dp(12),dp(18),dp(12));
+        Button back=button("‹");
+        back.setTextSize(25);
+        back.setBackground(round(0xFF1A2230,18));
+        header.addView(back,new LinearLayout.LayoutParams(dp(48),dp(46)));
+        back.setOnClickListener(v->finish());
+        TextView title=label(own?"Профиль":"Профиль пользователя",19,TEXT,true);
+        LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(0,-2,1);
+        tp.leftMargin=dp(12);
+        header.addView(title,tp);
+        root.addView(header);
+
+        ScrollView scroll=new ScrollView(this);
+        scroll.setClipToPadding(false);
+        content=new LinearLayout(this);
+        content.setOrientation(1);
+        content.setPadding(dp(18),dp(18),dp(18),dp(28));
+        scroll.addView(content);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        setContentView(root);
+
+        avatar=new ImageView(this);
+        avatar.setImageDrawable(getDrawable(android.R.drawable.sym_def_app_icon));
+        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        avatar.setBackground(round(0xFF202D43,100));
+        avatar.setClipToOutline(true);
+        avatar.setElevation(dp(5));
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(116),dp(116));
+        ap.gravity=Gravity.CENTER;
+        ap.bottomMargin=dp(15);
+        content.addView(avatar,ap);
+
+        TextView identity=label(own?"Ваш аккаунт":"Профиль kentGram",18,TEXT,true);
+        identity.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(-1,-2);
+        ip.bottomMargin=dp(18);
+        content.addView(identity,ip);
+
+        displayName=field("Имя");
+        bio=field("О себе — до 160 символов");
+        avatarUrl=field("HTTPS-ссылка на аватар");
         if(own) {
-            section("Имя пользователя"); 
-            section("Отображаемое имя");content.addView(displayName);
-            section("О себе");content.addView(bio);
-            section("Аватар");content.addView(avatarUrl);
-            TextView hint=label("Пока поддерживается ссылка на изображение HTTPS. Загрузка фото с устройства появится следующим этапом.",12,MUTED,false);hint.setPadding(0,0,0,dp(12));content.addView(hint);
-            saveButton=button("Сохранить изменения");content.addView(saveButton);saveButton.setOnClickListener(v->save());
+            LinearLayout card=new LinearLayout(this);
+            card.setOrientation(1);
+            card.setPadding(dp(16),dp(12),dp(16),dp(14));
+            card.setBackground(round(PANEL,22));
+            content.addView(card);
+            section("Имя пользователя");
+            section("Отображаемое имя");
+            card.addView(displayName);
+            section("О себе");
+            card.addView(bio);
+            section("Аватар");
+            card.addView(avatarUrl);
+            TextView hint=label("Пока поддерживается ссылка на изображение HTTPS. Загрузка фото с устройства появится следующим этапом.",12,MUTED,false);
+            hint.setPadding(0,0,0,dp(12));
+            card.addView(hint);
+            saveButton=button("Сохранить изменения");
+            card.addView(saveButton);
+            saveButton.setOnClickListener(v->save());
         } else {
-            section("Имя пользователя");content.addView(label("@"+username,16,MUTED,true));
-            section("Имя");content.addView(displayName);
-            section("О себе");content.addView(bio);
-            displayName.setEnabled(false);bio.setEnabled(false);
-            followButton=button("Подписаться");content.addView(followButton);followButton.setOnClickListener(v->toggleFollow());
+            LinearLayout card=new LinearLayout(this);
+            card.setOrientation(1);
+            card.setPadding(dp(16),dp(12),dp(16),dp(14));
+            card.setBackground(round(PANEL,22));
+            content.addView(card);
+            section("Имя пользователя");
+            card.addView(label("@"+username,15,MUTED,true));
+            section("Имя");
+            card.addView(displayName);
+            section("О себе");
+            card.addView(bio);
+            displayName.setEnabled(false);
+            bio.setEnabled(false);
+            followButton=button("Подписаться");
+            LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,-2);
+            fp.topMargin=dp(12);
+            card.addView(followButton,fp);
+            followButton.setOnClickListener(v->toggleFollow());
         }
-        content.addView(label("Подписчики и подписки",13,MUTED,true));
+        TextView social=label("ПОДПИСЧИКИ И ПОДПИСКИ",10,MUTED,true);
+        social.setLetterSpacing(.12f);
+        social.setPadding(dp(2),dp(18),0,dp(8));
+        content.addView(social);
     }
 
     private void load() {
@@ -134,8 +201,8 @@ public final class ProfileActivity extends Activity {
     }
 
     private void section(String s){TextView t=label(s,13,MUTED,true);t.setPadding(0,dp(8),0,dp(5));content.addView(t);}
-    private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(13),dp(8),dp(13),dp(8));e.setBackground(round(PANEL,12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);e.setLayoutParams(p);return e;}
-    private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(TEXT);b.setAllCaps(false);b.setBackground(round(BLUE,12));return b;}
+    private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(0xFF778397);e.setHint(hint);e.setTextSize(14);e.setPadding(dp(13),dp(10),dp(13),dp(10));e.setBackground(round(0xFF1A2230,13));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);e.setLayoutParams(p);return e;}
+    private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setBackground(round(BLUE,25));return b;}
     private TextView label(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);if(bold)t.setTypeface(null,Typeface.BOLD);return t;}
     private android.graphics.drawable.GradientDrawable round(int color,int radius){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
