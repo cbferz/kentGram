@@ -1,4 +1,4 @@
-const CACHE = "kentgram-web-shell-v2";
+const CACHE = "kentgram-web-shell-v3";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -35,13 +35,15 @@ self.addEventListener("fetch", (event) => {
   if (!SHELL.includes(url.pathname)) return;
 
   event.respondWith(
-    caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(request);
-      const network = fetch(request, { cache: "no-store" }).then((response) => {
-        if (response.ok) cache.put(request, response.clone());
-        return response;
-      });
-      return cached || network;
+    fetch(request, { cache: "no-store" }).then(async (response) => {
+      if (response.ok) {
+        const cache = await caches.open(CACHE);
+        await cache.put(request, response.clone());
+      }
+      return response;
+    }).catch(async () => {
+      const cached = await caches.match(request);
+      return cached || Response.error();
     })
   );
 });
