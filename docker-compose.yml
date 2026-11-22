@@ -7,6 +7,10 @@ services:
       PORT: "8080"
       DATABASE_URL: postgres://${POSTGRES_USER:-kentgram}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-kentgram}?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AVATAR_DIR: /data/avatars
+      MEDIA_DIR: /data/media
+    volumes:
+      - kentgram_media:/data
     depends_on:
       db:
         condition: service_healthy
@@ -32,3 +36,4 @@ services:
 
 volumes:
   postgres_data:
+  kentgram_media:
