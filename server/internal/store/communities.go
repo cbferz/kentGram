@@ -56,7 +56,8 @@ func (s *Store) CreateCommunityChat(ctx context.Context, ownerID int64, kind, ti
 
 func (s *Store) ListCommunityMembers(ctx context.Context, chatID, viewerID int64) ([]ChatMember, error) {
 	var allowed bool
-	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2)`, chatID, viewerID).Scan(&allowed); err != nil {
+	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM chat_members cm JOIN chats c ON c.id=cm.chat_id
+        WHERE cm.chat_id=$1 AND cm.user_id=$2 AND c.kind IN ('group','channel'))`, chatID, viewerID).Scan(&allowed); err != nil {
 		return nil, err
 	}
 	if !allowed {
