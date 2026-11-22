@@ -833,7 +833,6 @@ public final class MainActivity extends Activity {
         activePeerUsername="direct".equals(chatKind)&&peerUsername!=null?peerUsername:"";
         activePeerAvatarUrl="direct".equals(chatKind)&&peerAvatarUrl!=null?peerAvatarUrl:"";
         currentChat=id;
-        sendRealtimePresenceSubscribe(id);
         base(peer);
         root.removeViewAt(1);
         if(navBar!=null)root.removeView(navBar);
@@ -957,6 +956,7 @@ public final class MainActivity extends Activity {
             @Override public void afterTextChanged(android.text.Editable value){}
         });
         refreshMessages(id,messages,history);
+        sendRealtimePresenceSubscribe(id);
         if(!"direct".equals(chatKind)){
             requestGet("/chats/"+id,details->{
                 String role=details.optString("role","member");
