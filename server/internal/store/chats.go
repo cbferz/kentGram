@@ -165,3 +165,18 @@ func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, sender
     }
     return nil
 }
+
+ // ChatMemberIDs returns the exact member set for event fan-out. Callers must
+ // never broadcast a chat event to users outside this membership list.
+func (s *Store) ChatMemberIDs(ctx context.Context, chatID int64) ([]int64, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT user_id FROM chat_members WHERE chat_id=$1 ORDER BY user_id`, chatID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil { return nil, err }
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
