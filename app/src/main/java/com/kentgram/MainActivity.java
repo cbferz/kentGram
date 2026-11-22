@@ -330,7 +330,7 @@ public final class MainActivity extends Activity {
 
     private void showSettings(){
         base("Настройки");
-        TextView heading=label("Аккаунт",11,MUTED,true);
+        TextView heading=label("АККАУНТ",11,MUTED,true);
         heading.setLetterSpacing(.12f);
         content.addView(heading);
 
@@ -352,6 +352,54 @@ public final class MainActivity extends Activity {
         content.addView(profileCard);
         profileCard.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));
 
+        TextView security=label("БЕЗОПАСНОСТЬ",10,MUTED,true);
+        security.setLetterSpacing(.12f);
+        security.setPadding(dp(2),dp(22),0,dp(9));
+        content.addView(security);
+
+        LinearLayout sessionsCard=new LinearLayout(this);
+        sessionsCard.setOrientation(1);
+        sessionsCard.setPadding(dp(14),dp(14),dp(14),dp(14));
+        sessionsCard.setBackground(round(PANEL,18));
+        LinearLayout sessionsHeader=new LinearLayout(this);
+        sessionsHeader.setGravity(Gravity.CENTER_VERTICAL);
+        sessionsHeader.addView(label("Активные сеансы",15,TEXT,true),
+                new LinearLayout.LayoutParams(0,-2,1));
+        TextView refresh=label("Обновить",12,ACCENT,true);
+        sessionsHeader.addView(refresh);
+        sessionsCard.addView(sessionsHeader);
+        TextView sessionsHint=label("Устройства, на которых выполнен вход в твой аккаунт.",12,MUTED,false);
+        LinearLayout.LayoutParams hintParams=new LinearLayout.LayoutParams(-1,-2);
+        hintParams.topMargin=dp(5);
+        sessionsCard.addView(sessionsHint,hintParams);
+        LinearLayout sessionList=new LinearLayout(this);
+        sessionList.setOrientation(1);
+        LinearLayout.LayoutParams listParams=new LinearLayout.LayoutParams(-1,-2);
+        listParams.topMargin=dp(12);
+        sessionsCard.addView(sessionList,listParams);
+        refresh.setOnClickListener(v->loadSessions(sessionList));
+        content.addView(sessionsCard);
+
+        Button revokeOthers=button("Завершить остальные сеансы");
+        revokeOthers.setTextSize(13);
+        revokeOthers.setMinHeight(dp(48));
+        revokeOthers.setBackground(round(PANEL_ALT,30));
+        LinearLayout.LayoutParams revokeParams=new LinearLayout.LayoutParams(-1,-2);
+        revokeParams.topMargin=dp(10);
+        content.addView(revokeOthers,revokeParams);
+        revokeOthers.setOnClickListener(v->KentDialog.showMessage(this,
+                "Завершить остальные сеансы?",
+                "На всех других устройствах потребуется войти заново. Текущий сеанс останется активным.",
+                "Завершить",()->{
+                    request("/sessions/revoke-others",new JSONObject(),true,result->{
+                        int count=result.optInt("revoked",0);
+                        KentDialog.showMessage(this,"Готово",
+                                "Завершено сеансов: "+count,"Понятно",null);
+                        loadSessions(sessionList);
+                    });
+                }));
+        loadSessions(sessionList);
+
         TextView general=label("ПРИЛОЖЕНИЕ",10,MUTED,true);
         general.setLetterSpacing(.12f);
         general.setPadding(dp(2),dp(22),0,dp(9));
@@ -371,6 +419,62 @@ public final class MainActivity extends Activity {
             stopRealtime();
             showAuth();
         }));
+    }
+
+    private void loadSessions(LinearLayout target){
+        target.removeAllViews();
+        TextView loading=label("Загружаем список устройств…",12,MUTED,false);
+        target.addView(loading);
+        requestGet("/sessions",result->{
+            target.removeAllViews();
+            JSONArray sessions=result.optJSONArray("sessions");
+            if(sessions==null||sessions.length()==0){
+                target.addView(label("Активных сеансов нет.",12,MUTED,false));
+                return;
+            }
+            for(int i=0;i<sessions.length();i++){
+                JSONObject item=sessions.optJSONObject(i);
+                if(item==null)continue;
+                long id=item.optLong("id",0);
+                boolean current=item.optBoolean("current",false);
+                String device=item.optString("device_name","Устройство");
+                if(device.trim().isEmpty())device="Устройство";
+                String agent=item.optString("user_agent","");
+                String ip=item.optString("ip","");
+                String details=(agent.isEmpty()?"":agent)+"  "+(ip.isEmpty()?"":"· "+ip);
+                LinearLayout row=new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(0,dp(10),0,dp(10));
+                LinearLayout info=new LinearLayout(this);
+                info.setOrientation(1);
+                info.addView(label(device+(current?" · это устройство":""),13,
+                        current?0xFF9AB5FF:TEXT,true));
+                if(!details.trim().isEmpty()){
+                    TextView detail=label(details.trim(),10,MUTED,false);
+                    detail.setMaxLines(2);
+                    info.addView(detail);
+                }
+                row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+                if(!current&&id>0){
+                    TextView close=label("Завершить",11,0xFFFF8995,true);
+                    close.setPadding(dp(8),dp(8),0,dp(8));
+                    row.addView(close);
+                    close.setOnClickListener(v->KentDialog.showMessage(this,
+                            "Завершить сеанс?","Это устройство потеряет доступ к аккаунту.",
+                            "Завершить",()->requestDelete("/sessions/"+id,ignored->loadSessions(target))));
+                }else if(current){
+                    TextView badge=label("АКТИВЕН",9,0xFF8DD6B0,true);
+                    row.addView(badge);
+                }
+                target.addView(row);
+                if(i<sessions.length()-1){
+                    View divider=new View(this);
+                    divider.setBackgroundColor(0xFF283140);
+                    LinearLayout.LayoutParams dpv=new LinearLayout.LayoutParams(-1,dp(1));
+                    target.addView(divider,dpv);
+                }
+            }
+        });
     }
 
     private void showAuth(){
