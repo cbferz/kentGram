@@ -8,6 +8,8 @@ import (
 	"image/png"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"net/http/httptest"
 	"testing"
 )
@@ -98,6 +100,9 @@ func TestChatMediaUploadAndMembershipScopedDownload(t *testing.T) {
 	expectStatus(t, deleted, http.StatusOK)
 	deletedMedia := call(t, handler, http.MethodGet, downloadPath, peer.Access, nil)
 	expectStatus(t, deletedMedia, http.StatusNotFound)
+	if _, err := os.Stat(filepath.Join(api.cfg.MediaDir, mediaID+".png")); !os.IsNotExist(err) {
+		t.Fatalf("deleted attachment still exists on disk: %v", err)
+	}
 
 	channel := call(t, handler, http.MethodPost, "/api/v1/chats/community", owner.Access,
 		map[string]any{"kind": "channel", "title": "Announcements"})
