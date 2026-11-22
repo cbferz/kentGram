@@ -28,9 +28,8 @@ const maxChatMediaBytes = 20 << 20
 var chatMediaIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 func (a *API) uploadChatMedia(w http.ResponseWriter, r *http.Request) {
-	chatID, err := parseChatID(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+	chatID, ok := parseCommunityChatID(w, r)
+	if !ok {
 		return
 	}
 
@@ -142,9 +141,8 @@ func (a *API) uploadChatMedia(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) downloadChatMedia(w http.ResponseWriter, r *http.Request) {
-	chatID, err := parseChatID(r)
-	if err != nil {
-		http.NotFound(w, r)
+	chatID, ok := parseCommunityChatID(w, r)
+	if !ok {
 		return
 	}
 	mediaID := chi.URLParam(r, "mediaID")
