@@ -124,6 +124,9 @@ func (s *Store) ClosePoll(ctx context.Context, chatID, pollID, actorID int64) er
 
 
 func (s *Store) ListPolls(ctx context.Context, chatID, viewerID int64, limit int) ([]Poll, error) {
+	member, err := s.IsChatMember(ctx,chatID,viewerID)
+	if err != nil { return nil,err }
+	if !member { return nil,ErrNotFound }
 	if limit < 1 || limit > 100 { limit = 50 }
 	rows, err := s.Pool.Query(ctx, `SELECT p.id FROM polls p
 		JOIN chat_members cm ON cm.chat_id=p.chat_id AND cm.user_id=$2
