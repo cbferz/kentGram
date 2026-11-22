@@ -37,17 +37,17 @@ func TestRegisterAndLogin(t *testing.T) {
 	expectStatus(t, call(t, h, http.MethodPost, "/api/v1/auth/register", "", badUser), http.StatusBadRequest)
 
 	wrong := call(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]string{
-		"email": name + "@example.test", "password": "wrong-password-here"})
+		"username": name, "password": "wrong-password-here"})
 	expectStatus(t, wrong, http.StatusUnauthorized)
 	unknown := call(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]string{
-		"email": "nobody-" + name + "@example.test", "password": "wrong-password-here"})
+		"username": "nobody-" + name, "password": "wrong-password-here"})
 	expectStatus(t, unknown, http.StatusUnauthorized)
 	if wrong.Body.String() != unknown.Body.String() {
-		t.Fatal("unknown e-mail and wrong password must be indistinguishable")
+		t.Fatal("unknown username and wrong password must be indistinguishable")
 	}
 
 	ok := call(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]string{
-		"email": strings.ToUpper(name) + "@EXAMPLE.TEST", "password": testPassword})
+		"username": strings.ToUpper(name), "password": testPassword})
 	expectStatus(t, ok, http.StatusOK)
 
 	me := call(t, h, http.MethodGet, "/api/v1/me", asMap(t, ok)["access_token"].(string), nil)
@@ -159,7 +159,7 @@ func TestSessionManagementAndIsolation(t *testing.T) {
 
 	// Alice signs in on a second device, then signs every other device out.
 	second := call(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]string{
-		"email": alice.Email, "password": testPassword, "device_name": "tablet"})
+		"username": alice.Username, "password": testPassword, "device_name": "tablet"})
 	expectStatus(t, second, http.StatusOK)
 	secondAccess := asMap(t, second)["access_token"].(string)
 
@@ -196,11 +196,11 @@ func TestLoginLockoutPerAccount(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		rec := call(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]string{
-			"email": u.Email, "password": "definitely-wrong-password"})
+			"username": u.Username, "password": "definitely-wrong-password"})
 		expectStatus(t, rec, http.StatusUnauthorized)
 	}
 	locked := call(t, h, http.MethodPost, "/api/v1/auth/login", "", map[string]string{
-		"email": u.Email, "password": testPassword})
+		"username": u.Username, "password": testPassword})
 	expectStatus(t, locked, http.StatusTooManyRequests)
 	if locked.Header().Get("Retry-After") == "" {
 		t.Fatal("lockout response must include Retry-After")
@@ -211,7 +211,7 @@ func TestAuthEndpointRateLimit(t *testing.T) {
 	a := newTestAPI(t)
 	a.authLimiter = newIPRateLimiter(2, time.Minute)
 	h := a.Routes()
-	body := map[string]string{"email": "nobody@example.test", "password": "whatever-password"}
+	body := map[string]string{"username": "nobody", "password": "whatever-password"}
 
 	expectStatus(t, call(t, h, http.MethodPost, "/api/v1/auth/login", "", body), http.StatusUnauthorized)
 	expectStatus(t, call(t, h, http.MethodPost, "/api/v1/auth/login", "", body), http.StatusUnauthorized)
@@ -220,7 +220,7 @@ func TestAuthEndpointRateLimit(t *testing.T) {
 
 func TestRejectsMalformedJSON(t *testing.T) {
 	h := newTestAPI(t).Routes()
-	for _, raw := range []string{`{`, `{"email":1}`, `{"email":"a@b.c","password":"x","unknown":true}`, `{"email":"a@b.c"} {}`} {
+	for _, raw := range []string{`{`, `{"username":1}`, `{"email":"a@b.c","password":"x","unknown":true}`, `{"email":"a@b.c"} {}`} {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(raw))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
