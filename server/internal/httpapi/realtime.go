@@ -33,15 +33,19 @@ type realtimeClient struct {
 
 type realtimeHub struct {
 	mu      sync.RWMutex
-	clients map[int64]map[*realtimeClient]struct{}
+	clients         map[int64]map[*realtimeClient]struct{}
+	presenceVersion map[int64]uint64
 }
 
 func newRealtimeHub() *realtimeHub {
-	return &realtimeHub{clients: make(map[int64]map[*realtimeClient]struct{})}
+	return &realtimeHub{
+		clients: make(map[int64]map[*realtimeClient]struct{}),
+		presenceVersion: make(map[int64]uint64),
+	}
 }
 
 // register returns true only when this is the user's first live connection.
-func (h *realtimeHub) register(userID, sessionID int64, conn *websocket.Conn, api *API) (*realtimeClient, bool) {
+func (h *realtimeHub) register(userID, sessionID int64, conn *websocket.Conn, api *API) (*realtimeClient, bool, uint64) {
 	client := &realtimeClient{
 		userID: userID, sessionID: sessionID, conn: conn,
 		send: make(chan []byte, 64), done: make(chan struct{}), hub: h, api: api,
@@ -57,8 +61,9 @@ func (h *realtimeHub) register(userID, sessionID int64, conn *websocket.Conn, ap
 }
 
 // unregister returns true only when the user's final live connection closed.
-func (h *realtimeHub) unregister(client *realtimeClient) bool {
+func (h *realtimeHub) unregister(client *realtimeClient) (bool, uint64) {
 	becameOffline := false
+	var version uint64
 	client.once.Do(func() {
 		h.mu.Lock()
 		if userClients := h.clients[client.userID]; userClients != nil {
@@ -66,13 +71,40 @@ func (h *realtimeHub) unregister(client *realtimeClient) bool {
 			if len(userClients) == 0 {
 				delete(h.clients, client.userID)
 				becameOffline = true
+				h.presenceVersion[client.userID]++
+				version = h.presenceVersion[client.userID]
 			}
 		}
 		h.mu.Unlock()
 		close(client.done)
 		_ = client.conn.Close()
 	})
-	return becameOffline
+	return becameOffline, version
+}
+
+// publishPresence discards stale online/offline transitions if another
+// connection changed the user's state while membership was being loaded.
+func (h *realtimeHub) publishPresence(userIDs []int64, event realtimeEvent, excludeUserID, subjectUserID int64, online bool, version uint64) {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.presenceVersion[subjectUserID] != version || (len(h.clients[subjectUserID]) > 0) != online {
+		return
+	}
+	for _, userID := range userIDs {
+		if userID == excludeUserID {
+			continue
+		}
+		for client := range h.clients[userID] {
+			select {
+			case client.send <- payload:
+			default:
+			}
+		}
+	}
 }
 
 func (h *realtimeHub) isOnline(userID int64) bool {
@@ -114,12 +146,13 @@ func (c *realtimeClient) enqueue(event realtimeEvent) {
 }
 
 func (c *realtimeClient) unregister() {
-	if !c.hub.unregister(c) {
+	becameOffline, version := c.hub.unregister(c)
+	if !becameOffline {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	c.api.publishUserPresence(ctx, c.userID, false)
+	c.api.publishUserPresence(ctx, c.userID, false, version)
 }
 
 func (c *realtimeClient) readPump(ctx context.Context) {
@@ -218,17 +251,17 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	client, firstOnline := a.hub.register(userID(r), sessionID(r), conn, a)
+	client, firstOnline, version := a.hub.register(userID(r), sessionID(r), conn, a)
 	if firstOnline {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		a.publishUserPresence(ctx, client.userID, true)
+		a.publishUserPresence(ctx, client.userID, true, version)
 		cancel()
 	}
 	go client.writePump()
 	client.readPump(r.Context())
 }
 
-func (a *API) publishUserPresence(ctx context.Context, userID int64, online bool) {
+func (a *API) publishUserPresence(ctx context.Context, userID int64, online bool, version uint64) {
 	chatIDs, err := a.db.ChatIDsForUser(ctx, userID)
 	if err != nil {
 		return
@@ -238,9 +271,9 @@ func (a *API) publishUserPresence(ctx context.Context, userID int64, online bool
 		if err != nil {
 			continue
 		}
-		a.hub.publish(members, realtimeEvent{
+		a.hub.publishPresence(members, realtimeEvent{
 			Type: "user.presence", ChatID: chatID, UserID: userID, Online: online,
-		}, userID)
+		}, userID, userID, online, version)
 	}
 }
 
