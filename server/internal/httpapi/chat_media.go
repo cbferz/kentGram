@@ -195,9 +195,17 @@ func safeMediaName(name string) string {
 		return r
 	}, name)
 	name = strings.TrimSpace(name)
+	if name == "." || name == ".." {
+		return ""
+	}
 	runes := []rune(name)
 	if len(runes) > 180 {
-		name = string(runes[:180])
+		runes = runes[:180]
+		name = string(runes)
+	}
+	for len(name) > 255 && len(runes) > 0 {
+		runes = runes[:len(runes)-1]
+		name = string(runes)
 	}
 	return name
 }
