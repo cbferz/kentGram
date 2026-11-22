@@ -153,3 +153,23 @@ func (a *API) setCommunityMemberRole(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
+
+func (a *API) transferCommunityOwnership(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseCommunityChatID(w, r)
+	if !ok { return }
+	var q struct { UserID int64 `json:"user_id"` }
+	if decodeJSON(w, r, &q) != nil || q.UserID <= 0 || q.UserID == userID(r) {
+		writeError(w, http.StatusBadRequest, "invalid_user_id")
+		return
+	}
+	err := a.db.TransferCommunityOwnership(r.Context(), id, userID(r), q.UserID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "member_or_permission_not_found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "ownership_transfer_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"transferred": true})
+}
