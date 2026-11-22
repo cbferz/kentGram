@@ -1,9 +1,14 @@
 package com.kentgram;
 
 import android.app.Activity;
+import android.animation.ValueAnimator;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
@@ -34,8 +39,13 @@ public final class MainActivity extends Activity {
     private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
     private final HashMap<Long,ArrayDeque<Long>> replyQueues=new HashMap<>();
     private final HashSet<Long> sendingChats=new HashSet<>();
+    private final Handler uiHandler=new Handler(Looper.getMainLooper());
+    private View highlightedMessage;
+    private Runnable clearHighlightTask;
+    private String activePeerUsername="", activePeerAvatarUrl="";
+    private boolean onChatScreen=false, onNewChatScreen=false;
 
-    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
+    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
 
     private void base(String title){
         root=new LinearLayout(this);
@@ -64,8 +74,11 @@ public final class MainActivity extends Activity {
 
         buildNavigation(title);
         setContentView(root);
-        root.setAlpha(0f);
-        root.animate().alpha(1f).setDuration(190).start();
+        content.setAlpha(0f);
+        content.setTranslationY(dp(9));
+        content.animate().alpha(1f).translationY(0f).setDuration(210)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        if(navBar!=null){navBar.setAlpha(0f);navBar.animate().alpha(1f).setDuration(190).start();}
     }
 
     private void buildNavigation(String title){
@@ -406,6 +419,8 @@ public final class MainActivity extends Activity {
         request(username==null?"/auth/login":"/auth/register",b,false,r->{token=r.optString("access_token","");if(token.isEmpty()){toast("Сервер не вернул токен");return;}prefs.edit().putString("access_token",token).putString("refresh_token",r.optString("refresh_token","")).apply();showChats();});
     }
     private void showChats(){
+        onChatScreen=false;onNewChatScreen=false;
+        activePeerUsername="";activePeerAvatarUrl="";
         currentChat=0;
         base("kentGram");
 
@@ -480,6 +495,10 @@ public final class MainActivity extends Activity {
     }
 
     private void loadChats(LinearLayout chatsList){
+        TextView loading=label("Загружаем переписки…",13,MUTED,false);
+        loading.setGravity(Gravity.CENTER);
+        loading.setPadding(0,dp(22),0,dp(22));
+        chatsList.addView(loading);
         requestGet("/chats",r->{
             chatsList.removeAllViews();
             JSONArray a=r.optJSONArray("chats");
@@ -512,8 +531,12 @@ public final class MainActivity extends Activity {
                 String name=c.optString("peer_display_name");
                 if(name.isEmpty())name="@"+c.optString("peer_username");
                 String last=c.optString("last_message","Начните общение");
+                String peerUsername=c.optString("peer_username","");
+                String peerAvatarUrl=c.optString("peer_avatar_url","");
                 final long chatId=id;
                 final String peerName=name;
+                final String peerHandle=peerUsername;
+                final String peerAvatar=peerAvatarUrl;
 
                 LinearLayout card=new LinearLayout(this);
                 card.setGravity(Gravity.CENTER_VERTICAL);
@@ -539,7 +562,10 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
                 lp.bottomMargin=dp(8);
                 chatsList.addView(card,lp);
-                card.setOnClickListener(v->openChat(chatId,peerName));
+                card.setAlpha(0f);card.setTranslationY(dp(7));
+                card.animate().alpha(1f).translationY(0f).setStartDelay(Math.min(i*32L,256L))
+                        .setDuration(190).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+                card.setOnClickListener(v->openChat(chatId,peerName,peerHandle,peerAvatar));
                 card.setOnTouchListener((v,event)->{
                     if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)
                         v.animate().scaleX(.985f).scaleY(.985f).setDuration(70).start();
@@ -587,7 +613,7 @@ public final class MainActivity extends Activity {
                     try{body.put("user_id",uid);}catch(Exception ignored){}
                     request("/chats/direct",body,true,created->{
                         String peer=displayName.isEmpty()?"@"+username:displayName;
-                        openChat(created.optLong("chat_id"),peer);
+                        openChat(created.optLong("chat_id"),peer,username,u.optString("avatar_url",""));
                     });
                 });
                 LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
@@ -598,7 +624,18 @@ public final class MainActivity extends Activity {
     }
 
     private void showUserSearch(){
+        onChatScreen=false;onNewChatScreen=true;
         base("Новая переписка");
+        if(navBar!=null)root.removeView(navBar);
+        top.removeAllViews();
+        TextView back=label("‹",32,ACCENT,false);
+        back.setGravity(Gravity.CENTER);
+        top.addView(back,new LinearLayout.LayoutParams(dp(42),dp(46)));
+        back.setOnClickListener(v->showChats());
+        TextView title=label("Новая переписка",19,TEXT,true);
+        LinearLayout.LayoutParams titleParams=new LinearLayout.LayoutParams(0,-2,1);
+        titleParams.leftMargin=dp(10);
+        top.addView(title,titleParams);
         EditText q=field("Имя или @username");
         content.addView(q);
         Button search=button("Найти");
@@ -612,7 +649,10 @@ public final class MainActivity extends Activity {
             return true;
         });
     }
-    private void openChat(long id,String peer){
+    private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl){
+        onChatScreen=true;onNewChatScreen=false;
+        activePeerUsername=peerUsername==null?"":peerUsername;
+        activePeerAvatarUrl=peerAvatarUrl==null?"":peerAvatarUrl;
         currentChat=id;
         base(peer);
         root.removeViewAt(1);
@@ -624,12 +664,24 @@ public final class MainActivity extends Activity {
         top.addView(back,new LinearLayout.LayoutParams(dp(42),dp(46)));
         back.setOnClickListener(v->showChats());
 
+        ImageView peerAvatar=new ImageView(this);
+        peerAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        peerAvatar.setImageDrawable(getDrawable(android.R.drawable.sym_def_app_icon));
+        peerAvatar.setBackground(round(0xFF283957,50));
+        peerAvatar.setClipToOutline(true);
+        top.addView(peerAvatar,new LinearLayout.LayoutParams(dp(42),dp(42)));
+        loadChatAvatar(peerAvatar,activePeerAvatarUrl);
+
         LinearLayout peerBlock=new LinearLayout(this);
         peerBlock.setOrientation(1);
-        peerBlock.setPadding(dp(7),0,0,0);
-        peerBlock.addView(label(peer,17,TEXT,true));
-        peerBlock.addView(label("переписка",11,MUTED,false));
+        peerBlock.setPadding(dp(10),0,0,0);
+        TextView peerTitle=label(peer,16,TEXT,true);
+        peerBlock.addView(peerTitle);
+        peerBlock.addView(label(activePeerUsername.isEmpty()?"переписка":"@"+activePeerUsername,11,MUTED,false));
         top.addView(peerBlock,new LinearLayout.LayoutParams(0,-2,1));
+        View.OnClickListener openPeer=v->{if(!activePeerUsername.isEmpty()){Intent profile=new Intent(this,ProfileActivity.class);profile.putExtra("username",activePeerUsername);startActivity(profile);}};
+        peerBlock.setOnClickListener(openPeer);
+        peerAvatar.setOnClickListener(openPeer);
 
         ScrollView history=new ScrollView(this);
         history.setClipToPadding(false);
@@ -719,7 +771,21 @@ public final class MainActivity extends Activity {
                 bubble.setBackground(round(mine?0xFF315DA8:0xFF1B222D,mine?18:18));
                 LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);
                 p.setMargins(dp(2),dp(4),dp(2),dp(4));
-                row.addView(bubble,p);
+                LinearLayout messageLine=new LinearLayout(this);
+                messageLine.setGravity(Gravity.CENTER_VERTICAL|(mine?Gravity.RIGHT:Gravity.LEFT));
+                if(!mine){
+                    ImageView senderAvatar=new ImageView(this);
+                    senderAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    senderAvatar.setImageDrawable(getDrawable(android.R.drawable.sym_def_app_icon));
+                    senderAvatar.setBackground(round(0xFF283957,50));
+                    senderAvatar.setClipToOutline(true);
+                    LinearLayout.LayoutParams avatarParams=new LinearLayout.LayoutParams(dp(29),dp(29));
+                    avatarParams.setMargins(0,0,dp(7),0);
+                    messageLine.addView(senderAvatar,avatarParams);
+                    loadChatAvatar(senderAvatar,activePeerAvatarUrl);
+                }
+                messageLine.addView(bubble,p);
+                row.addView(messageLine,new LinearLayout.LayoutParams(-1,-2));
                 bubble.setOnLongClickListener(v->{
                     MessageActionMenu.show(this,bubble,body,mine,
                             ()->confirmDeleteMessage(id,messageId,messages,history),
@@ -738,7 +804,28 @@ public final class MainActivity extends Activity {
     }
     private void clearReply(){replyToMessageId=0;replyToBody="";replyToSender="";if(replyPreview!=null)replyPreview.setVisibility(View.GONE);}
     private void scrollToMessage(LinearLayout messages,ScrollView history,long targetID){
-        for(int i=0;i<messages.getChildCount();i++){View child=messages.getChildAt(i);Object tag=child.getTag();if(tag instanceof Long&&((Long)tag)==targetID){history.smoothScrollTo(0,child.getTop());child.setBackground(round(0xFF263B55,12));return;}}
+        for(int i=0;i<messages.getChildCount();i++){
+            View child=messages.getChildAt(i);
+            Object tag=child.getTag();
+            if(tag instanceof Long&&((Long)tag)==targetID){
+                if(clearHighlightTask!=null)uiHandler.removeCallbacks(clearHighlightTask);
+                if(highlightedMessage!=null&&highlightedMessage!=child)highlightedMessage.setBackgroundColor(Color.TRANSPARENT);
+                highlightedMessage=child;
+                child.setBackground(round(0xFF263B55,13));
+                history.smoothScrollTo(0,Math.max(0,child.getTop()-dp(24)));
+                clearHighlightTask=()->{
+                    if(highlightedMessage==child){
+                        child.animate().alpha(0.72f).setDuration(130).withEndAction(()->{
+                            child.setBackgroundColor(Color.TRANSPARENT);
+                            child.setAlpha(1f);
+                            highlightedMessage=null;
+                        }).start();
+                    }
+                };
+                uiHandler.postDelayed(clearHighlightTask,5000);
+                return;
+            }
+        }
         toast("Исходное сообщение не загружено");
     }
 
@@ -841,6 +928,22 @@ public final class MainActivity extends Activity {
             });
         });
     }
+    private void loadChatAvatar(ImageView target,String url){
+        if(target==null||url==null||url.trim().isEmpty())return;
+        io.execute(()->{
+            HttpURLConnection connection=null;
+            try{
+                connection=(HttpURLConnection)new URL(url).openConnection();
+                connection.setConnectTimeout(6000);connection.setReadTimeout(6000);
+                connection.setInstanceFollowRedirects(true);
+                try(InputStream input=connection.getInputStream()){
+                    Bitmap bitmap=BitmapFactory.decodeStream(input);
+                    if(bitmap!=null)runOnUiThread(()->{if(!isFinishing()&&target.getWindowToken()!=null)target.setImageBitmap(bitmap);});
+                }
+            }catch(Exception ignored){}
+            finally{if(connection!=null)connection.disconnect();}
+        });
+    }
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
     private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(0xFF778397);e.setHint(hint);e.setTextSize(14);e.setPadding(dp(14),dp(10),dp(14),dp(10));e.setBackground(round(PANEL,15));e.setSingleLine(false);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
     private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setPadding(dp(18),dp(8),dp(18),dp(8));b.setBackground(round(ACCENT,28));b.setElevation(dp(2));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);b.setLayoutParams(p);return b;}
@@ -848,5 +951,11 @@ public final class MainActivity extends Activity {
     private android.graphics.drawable.GradientDrawable round(int color,int radius){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
     private void toast(String s){KentDialog.showToast(this,s);}
-    @Override protected void onDestroy(){super.onDestroy();io.shutdown();}
+    @Override public void onBackPressed(){
+        if(onNewChatScreen||onChatScreen){showChats();return;}
+        super.onBackPressed();
+    }
+    @Override protected void onDestroy(){
+        if(clearHighlightTask!=null)uiHandler.removeCallbacks(clearHighlightTask);
+        super.onDestroy();io.shutdown();}
 }
