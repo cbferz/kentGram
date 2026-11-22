@@ -57,6 +57,21 @@ func TestRealtimeMessageAndTypingEvents(t *testing.T) {
 		onlineEvent.UserID != peer.ID || !onlineEvent.Online {
 		t.Fatalf("unexpected online presence event: %+v", onlineEvent)
 	}
+	if err := ownerSocket.WriteJSON(map[string]any{"type": "presence.subscribe", "chat_id": chatID}); err != nil {
+		t.Fatalf("send presence subscription: %v", err)
+	}
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, payload, err = ownerSocket.ReadMessage()
+	if err != nil {
+		t.Fatalf("read presence snapshot: %v", err)
+	}
+	var snapshotEvent realtimeEvent
+	if err := json.Unmarshal(payload, &snapshotEvent); err != nil {
+		t.Fatalf("decode presence snapshot: %v", err)
+	}
+	if snapshotEvent.Type != "user.presence" || snapshotEvent.UserID != peer.ID || !snapshotEvent.Online {
+		t.Fatalf("unexpected presence snapshot: %+v", snapshotEvent)
+	}
 
 	sent := call(t, handler, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/messages", chatID), owner.Access,
 		map[string]string{"text": "realtime delivery"})
