@@ -199,11 +199,11 @@ public final class ProfileActivity extends Activity {
                 c.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
                 String filename="image/jpeg".equals(mime)?"avatar.jpg":"avatar.png";
                 try(OutputStream out=c.getOutputStream()){
-                    out.write(("--"+boundary+"\\r\\n").getBytes(StandardCharsets.UTF_8));
-                    out.write(("Content-Disposition: form-data; name=\\"avatar\\"; filename=\\""+filename+"\\"\\r\\n").getBytes(StandardCharsets.UTF_8));
-                    out.write(("Content-Type: "+mime+"\\r\\n\\r\\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("--"+boundary+"\r\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("Content-Disposition: form-data; name=\\"avatar\\"; filename=\\""+filename+"\\"\r\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("Content-Type: "+mime+"\r\n\r\n").getBytes(StandardCharsets.UTF_8));
                     out.write(bytes);
-                    out.write(("\\r\\n--"+boundary+"--\\r\\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.UTF_8));
                 }
                 status=c.getResponseCode();
                 InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
