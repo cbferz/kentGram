@@ -11,6 +11,12 @@ import (
 type ChatSummary struct {
     ID int64 `json:"id"`
     Kind string `json:"kind"`
+    Title string `json:"title"`
+    Description string `json:"description"`
+    IsPublic bool `json:"is_public"`
+    Username string `json:"username,omitempty"`
+    Role string `json:"role"`
+    MemberCount int64 `json:"member_count"`
     PeerID int64 `json:"peer_id"`
     PeerUsername string `json:"peer_username"`
     PeerDisplayName string `json:"peer_display_name"`
@@ -52,7 +58,9 @@ func (s *Store) CreateDirectChat(ctx context.Context, me, peer int64) (int64, er
 }
 
 func (s *Store) ListChats(ctx context.Context, me int64) ([]ChatSummary, error) {
-    rows, err := s.Pool.Query(ctx, `SELECT c.id,c.kind,u.id,u.username,u.display_name,u.avatar_url,
+    rows, err := s.Pool.Query(ctx, `SELECT c.id,c.kind,c.title,c.description,c.is_public,COALESCE(c.username,''),mine.role,
+        (SELECT count(*) FROM chat_members cm_count WHERE cm_count.chat_id=c.id),
+        COALESCE(peer.id,0),COALESCE(peer.username,''),COALESCE(peer.display_name,''),COALESCE(peer.avatar_url,''),
         COALESCE(m.body,''),m.created_at,
         (SELECT count(*) FROM messages unread WHERE unread.chat_id=c.id AND unread.sender_id<>$1
           AND unread.id>(SELECT last_read_message_id FROM chat_members WHERE chat_id=c.id AND user_id=$1)
@@ -60,17 +68,22 @@ func (s *Store) ListChats(ctx context.Context, me int64) ([]ChatSummary, error) 
         c.created_at
         FROM chats c
         JOIN chat_members mine ON mine.chat_id=c.id AND mine.user_id=$1
-        JOIN chat_members peer ON peer.chat_id=c.id AND peer.user_id<>$1
-        JOIN users u ON u.id=peer.user_id
+        LEFT JOIN LATERAL (
+          SELECT u.id,u.username,u.display_name,u.avatar_url
+          FROM chat_members peer_member JOIN users u ON u.id=peer_member.user_id
+          WHERE peer_member.chat_id=c.id AND peer_member.user_id<>$1
+          ORDER BY peer_member.joined_at LIMIT 1
+        ) peer ON TRUE
         LEFT JOIN LATERAL (SELECT body,created_at FROM messages WHERE chat_id=c.id AND deleted_at IS NULL ORDER BY id DESC LIMIT 1) m ON TRUE
-        ORDER BY COALESCE(m.created_at,c.created_at) DESC
+        ORDER BY COALESCE(m.created_at,c.updated_at,c.created_at) DESC
         LIMIT 100`, me)
     if err != nil { return nil, err }
     defer rows.Close()
     out := []ChatSummary{}
     for rows.Next() {
         var c ChatSummary
-        if err := rows.Scan(&c.ID,&c.Kind,&c.PeerID,&c.PeerUsername,&c.PeerDisplayName,&c.PeerAvatarURL,&c.LastMessage,&c.LastMessageAt,&c.UnreadCount,&c.CreatedAt); err != nil { return nil, err }
+        if err := rows.Scan(&c.ID,&c.Kind,&c.Title,&c.Description,&c.IsPublic,&c.Username,&c.Role,&c.MemberCount,
+            &c.PeerID,&c.PeerUsername,&c.PeerDisplayName,&c.PeerAvatarURL,&c.LastMessage,&c.LastMessageAt,&c.UnreadCount,&c.CreatedAt); err != nil { return nil, err }
         out = append(out,c)
     }
     return out, rows.Err()
