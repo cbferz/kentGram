@@ -195,11 +195,16 @@ func (s *Store) MarkChatRead(ctx context.Context, chatID, userID, lastReadMessag
 
 // ChatReadCursors returns the current read cursor for each member of a chat.
 func (s *Store) ChatReadCursors(ctx context.Context, chatID, viewerID int64) (map[int64]int64, error) {
+	var member bool
+	if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2)`, chatID, viewerID).Scan(&member); err != nil {
+		return nil, err
+	}
+	if !member {
+		return nil, ErrNotFound
+	}
 	rows, err := s.Pool.Query(ctx, `SELECT cm.user_id,cm.last_read_message_id
 		FROM chat_members cm
-		WHERE cm.chat_id=$1
-		  AND EXISTS(SELECT 1 FROM chat_members viewer WHERE viewer.chat_id=$1 AND viewer.user_id=$2)`,
-		chatID, viewerID)
+		WHERE cm.chat_id=$1`, chatID)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	out := make(map[int64]int64)
