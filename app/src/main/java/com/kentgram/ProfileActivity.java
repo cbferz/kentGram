@@ -104,7 +104,15 @@ public final class ProfileActivity extends Activity {
             card.addView(bio);
             section(card,"Аватар");
             card.addView(avatarUrl);
-            TextView hint=label("Пока поддерживается ссылка на изображение HTTPS. Загрузка фото с устройства появится следующим этапом.",12,MUTED,false);
+            avatarUploadButton=button("Выбрать фото с устройства");
+            card.addView(avatarUploadButton);
+            avatarUploadButton.setOnClickListener(v->{
+                Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                pick.addCategory(Intent.CATEGORY_OPENABLE);
+                pick.setType("image/*");
+                startActivityForResult(pick,PICK_AVATAR);
+            });
+            TextView hint=label("JPEG или PNG · до 5 МБ. После загрузки ссылка останется постоянной.",12,MUTED,false);            TextView hint=label("Пока поддерживается ссылка на изображение HTTPS. Загрузка фото с устройства появится следующим этапом.",12,MUTED,false);
             hint.setPadding(0,0,0,dp(12));
             card.addView(hint);
             saveButton=button("Сохранить изменения");
@@ -200,7 +208,7 @@ public final class ProfileActivity extends Activity {
                 String filename="image/jpeg".equals(mime)?"avatar.jpg":"avatar.png";
                 try(OutputStream out=c.getOutputStream()){
                     out.write(("--"+boundary+"\r\n").getBytes(StandardCharsets.UTF_8));
-                    out.write(("Content-Disposition: form-data; name=\\"avatar\\"; filename=\\""+filename+"\\"\r\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("Content-Disposition: form-data; name=\"avatar\"; filename=\""+filename+"\"\r\n").getBytes(StandardCharsets.UTF_8));
                     out.write(("Content-Type: "+mime+"\r\n\r\n").getBytes(StandardCharsets.UTF_8));
                     out.write(bytes);
                     out.write(("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.UTF_8));
