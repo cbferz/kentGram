@@ -65,7 +65,6 @@ jobs:
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
-        continue-on-error: true
         with:
           name: kentgram-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
@@ -73,7 +72,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish signed APK as prerelease
-        if: steps.signing.outputs.configured == 'true' && ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+        if: steps.signing.outputs.configured == 'true' && ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feat/kentgram-complete-redesign'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -81,6 +80,9 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             RELEASE_TAG="kentgram-redesign-pr${{ github.event.pull_request.number }}"
             RELEASE_TITLE="kentGram redesign PR #${{ github.event.pull_request.number }}"
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            RELEASE_TAG="kentgram-redesign-build-${GITHUB_RUN_NUMBER}"
+            RELEASE_TITLE="kentGram redesign build #${GITHUB_RUN_NUMBER}"
           else
             RELEASE_TAG="debug-latest"
             RELEASE_TITLE="kentGram update (${GITHUB_SHA::7})"
