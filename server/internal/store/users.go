@@ -53,6 +53,17 @@ func (s *Store) UserByEmail(ctx context.Context, email string) (User, error) {
 	return u, norm(err)
 }
 
+// UserByUsername looks up an account by its case-insensitive username.
+// It also returns the password hash; callers must never serialise it.
+func (s *Store) UserByUsername(ctx context.Context, username string) (User, error) {
+	var u User
+	err := s.Pool.QueryRow(ctx,
+		`SELECT id,username,email,display_name,password_hash,bio,avatar_url,created_at
+			 FROM users WHERE lower(username)=lower($1)`, strings.TrimSpace(username),
+	).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Bio, &u.AvatarURL, &u.CreatedAt)
+	return u, norm(err)
+}
+
 func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	return scanUser(s.Pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE id=$1`, id))
 }

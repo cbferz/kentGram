@@ -374,14 +374,20 @@ public final class MainActivity extends Activity {
         TextView formTitle=label("Вход в аккаунт",18,TEXT,true);
         formTitle.setPadding(0,0,0,dp(14));
         form.addView(formTitle);
-        EditText email=field("Email");
-        EditText password=field("Пароль");
-        password.setInputType(129);
+
         EditText username=field("Имя пользователя");
-        username.setVisibility(View.GONE);
+        username.setSingleLine(true);
+        EditText email=field("Электронная почта");
+        email.setSingleLine(true);
+        email.setInputType( android.text.InputType.TYPE_CLASS_TEXT |
+                android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        email.setVisibility(View.GONE);
+        EditText password=field("Пароль");
+        password.setSingleLine(true);
+        password.setInputType(129);
+        form.addView(username);
         form.addView(email);
         form.addView(password);
-        form.addView(username);
 
         Button primary=button("Войти");
         Button secondary=button("Создать аккаунт");
@@ -392,37 +398,53 @@ public final class MainActivity extends Activity {
         secondary.setMinHeight(dp(48));
         secondary.setBackground(round(PANEL_ALT,40));
         form.addView(primary);
-        LinearLayout.LayoutParams secondaryParams=(LinearLayout.LayoutParams)secondary.getLayoutParams();
-        if(secondaryParams==null)secondaryParams=new LinearLayout.LayoutParams(-1,-2);
+        LinearLayout.LayoutParams secondaryParams=new LinearLayout.LayoutParams(-1,-2);
         secondaryParams.topMargin=dp(4);
         secondary.setLayoutParams(secondaryParams);
         form.addView(secondary);
 
         final boolean[] registering={false};
         primary.setOnClickListener(v->{
+            String name=username.getText().toString().trim();
             String mail=email.getText().toString().trim();
             String pass=password.getText().toString();
-            if(mail.isEmpty()||pass.isEmpty()){
-                KentDialog.showMessage(this,"Заполни поля","Укажи email и пароль, чтобы продолжить.","Понятно",null);
+            if(name.isEmpty()||pass.isEmpty()||(registering[0]&&mail.isEmpty())){
+                KentDialog.showMessage(this,"Заполни поля",
+                        registering[0]?"Укажи имя пользователя, электронную почту и пароль.":
+                                "Укажи имя пользователя и пароль.",
+                        "Понятно",null);
                 return;
             }
-            if(registering[0]&&username.getText().toString().trim().isEmpty()){
-                KentDialog.showMessage(this,"Нужно имя пользователя","Придумай username для нового аккаунта.","Понятно",null);
+            if(registering[0]&&!android.util.Patterns.EMAIL_ADDRESS.matcher(mail).matches()){
+                KentDialog.showMessage(this,"Проверь почту","Введи корректный адрес электронной почты.","Понятно",null);
                 return;
             }
-            auth(mail,pass,registering[0]?username.getText().toString():null);
+            auth(name,registering[0]?mail:null,pass);
         });
         secondary.setOnClickListener(v->{
             registering[0]=!registering[0];
-            username.setVisibility(registering[0]?View.VISIBLE:View.GONE);
+            email.setVisibility(registering[0]?View.VISIBLE:View.GONE);
             formTitle.setText(registering[0]?"Создание аккаунта":"Вход в аккаунт");
             primary.setText(registering[0]?"Зарегистрироваться":"Войти");
             secondary.setText(registering[0]?"Уже есть аккаунт? Войти":"Создать аккаунт");
         });
     }
-    private void auth(String email,String password,String username){
-        JSONObject b=new JSONObject();try{b.put("email",email.trim());b.put("password",password);b.put("device_name","kentGram Android");if(username!=null)b.put("username",username.trim());}catch(Exception ignored){}
-        request(username==null?"/auth/login":"/auth/register",b,false,r->{token=r.optString("access_token","");if(token.isEmpty()){toast("Сервер не вернул токен");return;}prefs.edit().putString("access_token",token).putString("refresh_token",r.optString("refresh_token","")).apply();showChats();});
+
+    private void auth(String username,String email,String password){
+        JSONObject b=new JSONObject();
+        try{
+            b.put("username",username.trim());
+            b.put("password",password);
+            b.put("device_name","kentGram Android");
+            if(email!=null)b.put("email",email.trim());
+        }catch(Exception ignored){}
+        request(email==null?"/auth/login":"/auth/register",b,false,r->{
+            token=r.optString("access_token","");
+            if(token.isEmpty()){toast("Сервер не вернул токен");return;}
+            prefs.edit().putString("access_token",token)
+                    .putString("refresh_token",r.optString("refresh_token","")).apply();
+            showChats();
+        });
     }
     private void showChats(){
         onChatScreen=false;onNewChatScreen=false;

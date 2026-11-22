@@ -46,7 +46,7 @@ type registerRequest struct {
 }
 
 type loginRequest struct {
-	Email      string `json:"email"`
+	Username   string `json:"username"`
 	Password   string `json:"password"`
 	DeviceName string `json:"device_name"`
 }
@@ -106,16 +106,24 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
-	email := normalizeEmail(q.Email)
+	username := strings.TrimSpace(q.Username)
+	if !usernamePattern.MatchString(username) {
+		// Use the same generic credential error as an unknown account.
+		_, _ = bcrypt.CompareHashAndPassword(dummyHash, []byte(q.Password))
+		securityEvent(r, "login_failed")
+		writeError(w, http.StatusUnauthorized, "invalid_credentials")
+		return
+	}
 
-	if ok, retry := a.loginLimiter.allow("login:"+email, time.Now()); !ok {
+	lockKey := strings.ToLower(username)
+	if ok, retry := a.loginLimiter.allow("login:"+lockKey, time.Now()); !ok {
 		securityEvent(r, "login_locked_out")
 		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retry.Seconds()))))
 		writeError(w, http.StatusTooManyRequests, "too_many_login_attempts")
 		return
 	}
 
-	user, err := a.db.UserByEmail(r.Context(), email)
+	user, err := a.db.UserByUsername(r.Context(), username)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "login_failed")
 		return
