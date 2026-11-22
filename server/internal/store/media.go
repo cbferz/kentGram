@@ -75,7 +75,9 @@ func (s *Store) GetChatMedia(ctx context.Context, chatID, viewerID int64, mediaI
 		cm.original_name,cm.content_type,cm.size_bytes,cm.created_at
 		FROM chat_media cm
 		JOIN chat_members member ON member.chat_id=cm.chat_id AND member.user_id=$3
-		WHERE cm.chat_id=$1 AND cm.media_id=$2`,
+		WHERE cm.chat_id=$1 AND cm.media_id=$2
+		  AND EXISTS(SELECT 1 FROM messages m
+		    WHERE m.chat_id=cm.chat_id AND m.media_id=cm.media_id AND m.deleted_at IS NULL)`,
 		chatID, mediaID, viewerID,
 	).Scan(&media.MediaID, &media.ChatID, &media.UploaderID, &media.StorageName,
 		&media.OriginalName, &media.ContentType, &media.SizeBytes, &media.CreatedAt)
