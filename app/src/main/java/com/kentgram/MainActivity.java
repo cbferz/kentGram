@@ -15,6 +15,9 @@ import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.ArrayDeque;
+import java.util.HashMap;
+import java.util.HashSet;
 
 public final class MainActivity extends Activity {
     private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
@@ -25,6 +28,8 @@ public final class MainActivity extends Activity {
     private LinearLayout root,content,top,navBar;
     private EditText composer;
     private long currentChat=0;
+    private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
+    private final HashSet<Long> sendingChats=new HashSet<>();
 
     @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
 
@@ -375,13 +380,54 @@ public final class MainActivity extends Activity {
         send.setOnClickListener(v->sendMessage(id,messages,history));composer.setOnEditorActionListener((v,a,e)->{sendMessage(id,messages,history);return true;});refreshMessages(id,messages,history);
     }
     private void refreshMessages(long id,LinearLayout messages,ScrollView history){
-        requestGet("/chats/"+id+"/messages",r->{if(currentChat!=id)return;messages.removeAllViews();JSONArray a=r.optJSONArray("messages");if(a!=null)for(int i=0;i<a.length();i++){JSONObject m=a.optJSONObject(i);if(m==null)continue;boolean mine=m.optBoolean("is_mine");LinearLayout row=new LinearLayout(this);row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);TextView bubble=label(m.optString("body"),15,TEXT,false);bubble.setPadding(dp(13),dp(9),dp(13),dp(9));bubble.setBackground(round(mine?0xFF17466A:0xFF202A38,16));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);p.setMargins(dp(2),dp(4),dp(2),dp(4));row.addView(bubble,p);messages.addView(row);}history.post(()->history.fullScroll(View.FOCUS_DOWN));});
+        requestGet("/chats/"+id+"/messages",r->{if(currentChat!=id)return;messages.removeAllViews();JSONArray a=r.optJSONArray("messages");if(a!=null)for(int i=0;i<a.length();i++){JSONObject m=a.optJSONObject(i);if(m==null)continue;boolean mine=m.optBoolean("is_mine");LinearLayout row=new LinearLayout(this);row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);TextView bubble=label(m.optString("body"),15,TEXT,false);bubble.setPadding(dp(13),dp(9),dp(13),dp(9));bubble.setBackground(round(mine?0xFF17466A:0xFF202A38,16));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);p.setMargins(dp(2),dp(4),dp(2),dp(4));row.addView(bubble,p);bubble.setOnLongClickListener(v->{MessageActionMenu.show(this,bubble,m.optString("body"));return true;});messages.addView(row);}history.post(()->history.fullScroll(View.FOCUS_DOWN));});
     }
-    private void sendMessage(long id,LinearLayout messages,ScrollView history){String text=composer.getText().toString().trim();if(text.isEmpty())return;composer.setText("");JSONObject b=new JSONObject();try{b.put("text",text);}catch(Exception ignored){}request("/chats/"+id+"/messages",b,true,r->refreshMessages(id,messages,history));}
+    private void sendMessage(long id,LinearLayout messages,ScrollView history){
+        if(composer==null)return;
+        String text=composer.getText().toString().trim();
+        if(text.isEmpty())return;
+        ArrayDeque<String> queue=sendQueues.computeIfAbsent(id,k->new ArrayDeque<>());
+        // A failed head remains queued. Tapping send with that same restored draft retries it
+        // instead of creating a duplicate message.
+        if(queue.isEmpty()||!queue.peekFirst().equals(text)||sendingChats.contains(id))queue.addLast(text);
+        composer.setText("");
+        pumpSendQueue(id,messages,history);
+    }
+    private void pumpSendQueue(long id,LinearLayout messages,ScrollView history){
+        if(sendingChats.contains(id))return;
+        ArrayDeque<String> queue=sendQueues.get(id);
+        if(queue==null||queue.isEmpty())return;
+        String text=queue.peekFirst();
+        sendingChats.add(id);
+        JSONObject body=new JSONObject();
+        try{body.put("text",text);}catch(Exception ignored){}
+        request("/chats/"+id+"/messages",body,true,
+            response->{
+                ArrayDeque<String> pending=sendQueues.get(id);
+                if(pending!=null&&!pending.isEmpty())pending.removeFirst();
+                sendingChats.remove(id);
+                if(pending!=null&&pending.isEmpty())sendQueues.remove(id);
+                if(pending!=null&&!pending.isEmpty())pumpSendQueue(id,messages,history);
+                else refreshMessages(id,messages,history);
+            },
+            (error,status)->{
+                sendingChats.remove(id);
+                if(currentChat==id&&composer!=null&&composer.getText().length()==0)composer.setText(text);
+            });
+    }
     private interface Done{void accept(JSONObject value);}
     private void requestGet(String path,Done done){request(path,null,true,done);}
+    private interface Failed{void accept(JSONObject value,int status);}
     private void request(String path,JSONObject body,boolean auth,Done done){
-        io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);String responseText=b.toString("UTF-8");try{out=new JSONObject(responseText);}catch(JSONException parseError){out=new JSONObject();out.put("error",status==404?"endpoint_not_found":status>=500?"server_error":"http_error");}}c.disconnect();}catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{if(code>=200&&code<300)done.accept(result);else if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}else KentDialog.showMessage(this,code==404?"Маршрут не найден":"Не удалось выполнить запрос",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);});});
+        request(path,body,auth,done,null);
+    }
+    private void request(String path,JSONObject body,boolean auth,Done done,Failed failed){
+        io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);String responseText=b.toString("UTF-8");try{out=new JSONObject(responseText);}catch(JSONException parseError){out=new JSONObject();out.put("error",status==404?"endpoint_not_found":status>=500?"server_error":"http_error");}}c.disconnect();}catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{
+            if(code>=200&&code<300){done.accept(result);return;}
+            if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}
+            else KentDialog.showMessage(this,code==404?"Маршрут не найден":"Не удалось выполнить запрос",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
+            if(failed!=null)failed.accept(result,code);
+        });});
     }
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
     private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(13),dp(8),dp(13),dp(8));e.setBackground(round(PANEL,12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
