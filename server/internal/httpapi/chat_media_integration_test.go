@@ -81,4 +81,20 @@ func TestChatMediaUploadAndMembershipScopedDownload(t *testing.T) {
 
 	forbidden := call(t, handler, http.MethodGet, downloadPath, outsider.Access, nil)
 	expectStatus(t, forbidden, http.StatusNotFound)
+
+	channel := call(t, handler, http.MethodPost, "/api/v1/chats/community", owner.Access,
+		map[string]any{"kind": "channel", "title": "Announcements"})
+	expectStatus(t, channel, http.StatusCreated)
+	channelID := int64(asMap(t, channel)["id"].(float64))
+	added := call(t, handler, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/members", channelID), owner.Access,
+		map[string]int64{"user_id": peer.ID})
+	expectStatus(t, added, http.StatusCreated)
+
+	memberUpload := uploadChatMediaRequest(t, handler, fmt.Sprintf("/api/v1/chats/%d/media", channelID),
+		peer.Access, "member.png", makeTestPNG(t))
+	expectStatus(t, memberUpload, http.StatusNotFound)
+
+	ownerUpload := uploadChatMediaRequest(t, handler, fmt.Sprintf("/api/v1/chats/%d/media", channelID),
+		owner.Access, "owner.png", makeTestPNG(t))
+	expectStatus(t, ownerUpload, http.StatusCreated)
 }
