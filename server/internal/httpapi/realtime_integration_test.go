@@ -61,6 +61,10 @@ func TestRealtimeMessageAndTypingEvents(t *testing.T) {
 	if messageEvent.Type != "message.created" || messageEvent.ChatID != chatID || messageEvent.MessageID != messageID {
 		t.Fatalf("unexpected message event: %+v", messageEvent)
 	}
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := ownerSocket.ReadMessage(); err != nil {
+		t.Fatalf("sender session did not receive its own message event: %v", err)
+	}
 
 	if err := peerSocket.WriteJSON(map[string]any{"type": "typing", "chat_id": chatID}); err != nil {
 		t.Fatalf("send typing event: %v", err)
