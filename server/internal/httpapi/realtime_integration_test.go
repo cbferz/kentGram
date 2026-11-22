@@ -40,7 +40,7 @@ func TestRealtimeMessageAndTypingEvents(t *testing.T) {
 	chatID := int64(asMap(t, created)["chat_id"].(float64))
 
 	server := httptest.NewServer(handler)
-	defer server.Close()
+	t.Cleanup(server.Close)
 	ownerSocket := dialRealtime(t, server.URL, owner.Access)
 	peerSocket := dialRealtime(t, server.URL, peer.Access)
 
