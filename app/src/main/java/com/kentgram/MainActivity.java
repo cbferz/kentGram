@@ -945,7 +945,7 @@ public final class MainActivity extends Activity {
             JSONObject out=new JSONObject();int status=0;
             try{
                 HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();
-                c.setRequestMethod("PATCH");
+                c.setRequestMethod("PUT");
                 c.setConnectTimeout(12000);c.setReadTimeout(12000);
                 c.setRequestProperty("Accept","application/json");
                 c.setRequestProperty("Content-Type","application/json");
