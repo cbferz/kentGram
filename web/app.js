@@ -132,6 +132,7 @@
   }
   $("refresh-chats").addEventListener("click",()=>loadChats().catch(e=>toast(translateError(e.message))));
   $("chat-reload").addEventListener("click",()=>state.chat&&loadMessages(state.chat.id).catch(e=>toast(translateError(e.message))));
+  $("back-to-chats").addEventListener("click",()=>{$("app").classList.remove("chat-open");$("welcome").classList.remove("hidden");$("chat-header").classList.add("hidden");$("messages").classList.add("hidden");$("composer").classList.add("hidden");});
   $("logout-button").addEventListener("click",async()=>{try{await api("/auth/logout",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});}catch{}clearTokens();state.me=null;state.chat=null;showAuth();});
   $("settings-button").addEventListener("click",()=>openSettings());
   $("settings-back").addEventListener("click",()=>{$("settings-panel").classList.add("hidden");$("app").classList.remove("settings-open");if(state.chat)$("app").classList.add("chat-open");});
@@ -146,5 +147,5 @@
     try{if(!state.me)state.me=await api("/me");showApp();await loadChats();connectSocket();}
     catch(err){clearTokens();showAuth("Сессия завершена. Войди снова.");}
   }
-  if(state.access&&state.refresh)boot();else showAuth();
+  if("serviceWorker" in navigator)window.addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}));\n  if(state.access&&state.refresh)boot();else showAuth();
 })();
