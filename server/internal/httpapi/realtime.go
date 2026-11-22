@@ -20,8 +20,9 @@ type realtimeEvent struct {
 }
 
 type realtimeClient struct {
-	userID int64
-	conn   *websocket.Conn
+	userID    int64
+	sessionID int64
+	conn      *websocket.Conn
 	send   chan []byte
 	done   chan struct{}
 	hub    *realtimeHub
@@ -37,10 +38,11 @@ func newRealtimeHub() *realtimeHub {
 	return &realtimeHub{clients: make(map[int64]map[*realtimeClient]struct{})}
 }
 
-func (h *realtimeHub) register(userID int64, conn *websocket.Conn) *realtimeClient {
+func (h *realtimeHub) register(userID, sessionID int64, conn *websocket.Conn) *realtimeClient {
 	client := &realtimeClient{
-		userID: userID,
-		conn:   conn,
+		userID:    userID,
+		sessionID: sessionID,
+		conn:      conn,
 		send:   make(chan []byte, 64),
 		done:   make(chan struct{}),
 		hub:    h,
@@ -130,7 +132,7 @@ func (c *realtimeClient) readPump(api *API, ctx context.Context) {
 	}
 }
 
-func (c *realtimeClient) writePump() {
+func (c *realtimeClient) writePump(api *API) {
 	ticker := time.NewTicker(25 * time.Second)
 	defer func() {
 		ticker.Stop()
@@ -145,6 +147,12 @@ func (c *realtimeClient) writePump() {
 				return
 			}
 		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			active, err := api.db.SessionActive(ctx, c.sessionID, c.userID)
+			cancel()
+			if err != nil || !active {
+				return
+			}
 			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
@@ -172,8 +180,8 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	client := a.hub.register(userID(r), conn)
-	go client.writePump()
+	client := a.hub.register(userID(r), sessionID(r), conn)
+	go client.writePump(a)
 	client.readPump(a, r.Context())
 }
 
