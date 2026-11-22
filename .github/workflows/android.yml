@@ -49,17 +49,25 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      # Release assets do not consume Actions artifact storage, so this is the
-      # reliable download location for the latest debug build of main.
-      - name: Publish APK as rolling prerelease
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+      # Release assets do not consume Actions artifact storage. Publish main
+      # to its existing rolling tag and same-repository PR builds to an isolated
+      # PR tag, leaving the main download untouched.
+      - name: Publish APK as prerelease
+        if: (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk kentgram-debug.apk
-          gh release delete debug-latest --cleanup-tag --yes || true
-          gh release create debug-latest kentgram-debug.apk \
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            RELEASE_TAG="kentgram-redesign-pr${{ github.event.pull_request.number }}"
+            RELEASE_TITLE="kentGram redesign PR #${{ github.event.pull_request.number }}"
+          else
+            RELEASE_TAG="debug-latest"
+            RELEASE_TITLE="Debug APK (${GITHUB_SHA::7})"
+          fi
+          gh release delete "$RELEASE_TAG" --cleanup-tag --yes || true
+          gh release create "$RELEASE_TAG" kentgram-debug.apk \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "Debug APK (${GITHUB_SHA::7})" \
+            --title "$RELEASE_TITLE" \
             --notes "Automated debug build of commit $GITHUB_SHA. Debug-signed, not for production distribution."
