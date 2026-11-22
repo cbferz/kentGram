@@ -62,7 +62,7 @@ func (s *Store) CreateChatMediaMessage(ctx context.Context, chatID, uploaderID i
 		return ChatMessage{}, err
 	}
 	message.IsMine = true
-	message.MediaURL = "/api/v1/chats/" + strconv.FormatInt(chatID, 10) + "/media/" + media.MediaID
+	message.MediaURL = "/chats/" + strconv.FormatInt(chatID, 10) + "/media/" + media.MediaID
 	message.MediaMime = media.ContentType
 	message.MediaName = media.OriginalName
 	message.MediaSize = media.SizeBytes
