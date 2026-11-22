@@ -2,6 +2,7 @@ services:
   api:
     environment:
       AVATAR_DIR: /data/avatars
+      MEDIA_DIR: /data/media
       PUBLIC_BASE_URL: https://api.kentgram.tendercheck.pro
     volumes:
       - kentgram_media:/data
