@@ -482,11 +482,18 @@ public final class MainActivity extends Activity {
         section.setGravity(Gravity.CENTER_VERTICAL);
         TextView caption=label("Последние",15,TEXT,true);
         section.addView(caption,new LinearLayout.LayoutParams(0,-2,1));
-        TextView createCommunity=label("+ Группа / канал",11,ACCENT,true);
+        TextView joinCommunity=label("Вступить",11,MUTED,true);
+        joinCommunity.setPadding(dp(8),dp(7),dp(8),dp(7));
+        joinCommunity.setBackground(round(PANEL_ALT,12));
+        joinCommunity.setOnClickListener(v->showJoinCommunityDialog());
+        section.addView(joinCommunity);
+        TextView createCommunity=label("+ Создать",11,ACCENT,true);
         createCommunity.setPadding(dp(8),dp(7),dp(8),dp(7));
         createCommunity.setBackground(round(PANEL_ALT,12));
         createCommunity.setOnClickListener(v->showCommunityCreateDialog());
-        section.addView(createCommunity);
+        LinearLayout.LayoutParams createParams=new LinearLayout.LayoutParams(-2,-2);
+        createParams.leftMargin=dp(7);
+        section.addView(createCommunity,createParams);
         content.addView(section);
         LinearLayout chatsList=new LinearLayout(this);
         chatsList.setOrientation(1);
@@ -550,6 +557,15 @@ public final class MainActivity extends Activity {
         descriptionInput.setSingleLine(false);
         descriptionInput.setMinLines(2);
         form.addView(descriptionInput,new LinearLayout.LayoutParams(-1,dp(76)));
+        CheckBox publicToggle=new CheckBox(this);
+        publicToggle.setText("Публичное сообщество");
+        publicToggle.setTextColor(TEXT);
+        form.addView(publicToggle);
+        EditText usernameInput=field("Публичный @username");
+        usernameInput.setSingleLine(true);
+        usernameInput.setVisibility(View.GONE);
+        form.addView(usernameInput,new LinearLayout.LayoutParams(-1,dp(50)));
+        publicToggle.setOnCheckedChangeListener((button,checked)->usernameInput.setVisibility(checked?View.VISIBLE:View.GONE));
         AlertDialog dialog=new AlertDialog.Builder(this)
                 .setTitle("Новое сообщество")
                 .setView(form)
@@ -564,7 +580,8 @@ public final class MainActivity extends Activity {
                 body.put("kind",channelOption.isChecked()?"channel":"group");
                 body.put("title",title);
                 body.put("description",descriptionInput.getText().toString().trim());
-                body.put("is_public",false);
+                body.put("is_public",publicToggle.isChecked());
+                if(publicToggle.isChecked())body.put("username",usernameInput.getText().toString().trim().replace("@",""));
             }catch(JSONException ignored){}
             request("/chats/community",body,true,result->{
                 dialog.dismiss();
@@ -574,6 +591,26 @@ public final class MainActivity extends Activity {
             });
         }));
         dialog.show();
+    }
+
+    private void showJoinCommunityDialog(){
+        EditText username=field("@username сообщества");
+        username.setSingleLine(true);
+        new AlertDialog.Builder(this)
+                .setTitle("Вступить в группу или канал")
+                .setView(username)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Вступить",(dialog,which)->{
+                    String handle=username.getText().toString().trim().replace("@","");
+                    if(handle.isEmpty()){toast("Укажите username");return;}
+                    JSONObject body=new JSONObject();
+                    try{body.put("username",handle);}catch(JSONException ignored){}
+                    request("/chats/join",body,true,result->{
+                        cachedChats=null;
+                        showChats();
+                        toast("Вы вступили в сообщество");
+                    });
+                }).show();
     }
 
     private void loadChats(LinearLayout chatsList){
