@@ -16,7 +16,10 @@ Polls are scoped to a chat. Every endpoint requires a KentGram access token and 
 
 A poll requires 2–10 options. Questions are limited to 300 characters and options to 100 characters. Only channel owners/admins may publish polls in channels; group members and direct-chat participants may create them.
 
-## Read
+## List and read
+
+`GET /api/v1/chats/{chatID}/polls` returns up to 50 most recent polls in the chat. `GET /api/v1/chats/{chatID}/polls/{pollID}` returns one poll. Both endpoints require current chat membership.
+
 `GET /api/v1/chats/{chatID}/polls/{pollID}`
 
 Returns option vote totals and whether the current user selected each option. Voter identities are never returned by this API; the anonymous flag is retained as poll metadata for future client presentation.
