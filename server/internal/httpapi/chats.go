@@ -43,12 +43,12 @@ func (a *API) listChatMessages(w http.ResponseWriter,r *http.Request) {
 func (a *API) sendChatMessage(w http.ResponseWriter,r *http.Request) {
     chatID,err:=strconv.ParseInt(chi.URLParam(r,"chatID"),10,64)
     if err!=nil || chatID<=0 { writeError(w,http.StatusBadRequest,"invalid_chat_id");return }
-    var q struct { Text string `json:"text"` }
+    var q struct { Text string `json:"text"`; ReplyToMessageID int64 `json:"reply_to_message_id"` }
     if decodeJSON(w,r,&q)!=nil { writeError(w,http.StatusBadRequest,"invalid_json");return }
     q.Text=strings.TrimSpace(q.Text)
     if q.Text=="" || len([]rune(q.Text))>4000 { writeError(w,http.StatusBadRequest,"message_must_be_1_to_4000_characters");return }
-    m,err:=a.db.SendChatMessage(r.Context(),chatID,userID(r),q.Text)
-    if errors.Is(err,store.ErrNotFound) { writeError(w,http.StatusNotFound,"chat_not_found");return }
+    m,err:=a.db.SendChatMessage(r.Context(),chatID,userID(r),q.Text,q.ReplyToMessageID)
+    if errors.Is(err,store.ErrNotFound) { writeError(w,http.StatusNotFound,"chat_or_reply_not_found");return }
     if err!=nil { writeError(w,http.StatusInternalServerError,"message_send_failed");return }
     writeJSON(w,http.StatusCreated,m)
 }
