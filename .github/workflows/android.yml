@@ -63,14 +63,6 @@ jobs:
           test -x "$APKSIGNER"
           "$APKSIGNER" verify --verbose "$APK"
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kentgram-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 7
-          if-no-files-found: error
-
       - name: Publish signed APK as prerelease
         if: steps.signing.outputs.configured == 'true' && ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feat/kentgram-complete-redesign'))
         env:
