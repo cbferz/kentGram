@@ -39,6 +39,7 @@ func (a *API) Routes() http.Handler {
 		middleware.Timeout(20*time.Second), securityHeaders)
 
 	r.Get("/health", a.health)
+	r.Get("/media/avatars/{filename}", a.avatarFile)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(a.apiLimiter.middleware)
@@ -67,6 +68,7 @@ func (a *API) Routes() http.Handler {
 			r.Get("/contacts", a.contacts)
 			r.Get("/me", a.me)
 			r.Patch("/me/profile", a.updateProfile)
+			r.Post("/me/avatar", a.uploadAvatar)
 			r.Get("/users/search", a.searchUsers)
 			r.Get("/users/{username}", a.publicProfile)
 			r.Post("/users/{userID}/follow", a.follow)
