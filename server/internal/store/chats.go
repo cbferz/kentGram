@@ -113,7 +113,8 @@ func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int
     }
     for i,j:=0,len(out)-1;i<j;i,j=i+1,j-1 { out[i],out[j]=out[j],out[i] }
     if rows.Err()!=nil{return nil,rows.Err()}
-    if _,err:=s.Pool.Exec(ctx,`UPDATE chat_members SET last_read_message_id=GREATEST(last_read_message_id,COALESCE((SELECT max(id) FROM messages WHERE chat_id=$1),0)) WHERE chat_id=$1 AND user_id=$2`,chatID,viewerID);err!=nil{return nil,err}
+    // Loading history is not itself a read acknowledgement. The client
+    // explicitly advances its cursor after the latest messages are displayed.
     return out,nil
 }
 
