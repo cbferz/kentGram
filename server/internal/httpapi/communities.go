@@ -196,3 +196,23 @@ func (a *API) joinPublicCommunityChat(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"joined": true, "chat_id": chatID})
 }
+
+func (a *API) removeCommunityMember(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseCommunityChatID(w, r)
+	if !ok { return }
+	targetID, err := strconv.ParseInt(chi.URLParam(r, "userID"), 10, 64)
+	if err != nil || targetID <= 0 || targetID == userID(r) {
+		writeError(w, http.StatusBadRequest, "invalid_user_id")
+		return
+	}
+	err = a.db.RemoveCommunityMember(r.Context(), id, userID(r), targetID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "member_or_permission_not_found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "member_remove_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"removed": true})
+}
