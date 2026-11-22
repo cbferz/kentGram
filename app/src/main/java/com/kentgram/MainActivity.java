@@ -15,6 +15,9 @@ import android.view.View;
 import android.widget.*;
 import android.content.SharedPreferences;
 import android.content.Intent;
+import android.net.Uri;
+import android.database.Cursor;
+import android.provider.OpenableColumns;
 import org.json.*;
 import java.io.*;
 import java.net.*;
@@ -31,6 +34,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.UUID;
 
 public final class MainActivity extends Activity {
     private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
@@ -53,6 +57,10 @@ public final class MainActivity extends Activity {
     private long replyToMessageId=0;
     private String replyToBody="", replyToSender="";
     private long currentChat=0, activePeerID=0, activePeerReadCursor=0;
+    private static final int REQUEST_PICK_CHAT_MEDIA=4101;
+    private long pendingMediaChatId=0;
+    private LinearLayout pendingMediaMessages;
+    private ScrollView pendingMediaHistory;
     private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
     private final HashMap<Long,ArrayDeque<Long>> replyQueues=new HashMap<>();
     private final HashSet<Long> sendingChats=new HashSet<>();
@@ -899,6 +907,19 @@ public final class MainActivity extends Activity {
         composer.setPadding(dp(12),dp(7),dp(8),dp(7));
         composer.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));
         bar.addView(composer);
+        TextView attach=label("＋",22,ACCENT,true);
+        attach.setGravity(Gravity.CENTER);
+        bar.addView(attach,new LinearLayout.LayoutParams(dp(40),dp(44)));
+        attach.setOnClickListener(v->{
+            pendingMediaChatId=id;
+            pendingMediaMessages=messages;
+            pendingMediaHistory=history;
+            Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            picker.addCategory(Intent.CATEGORY_OPENABLE);
+            picker.setType("*/*");
+            picker.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/jpeg","image/png","application/pdf"});
+            startActivityForResult(picker,REQUEST_PICK_CHAT_MEDIA);
+        });
         TextView send=label("➤",19,Color.WHITE,true);
         send.setGravity(Gravity.CENTER);
         send.setBackground(round(ACCENT,50));
@@ -1505,6 +1526,90 @@ public final class MainActivity extends Activity {
                 }
             });
         }catch(JSONException ignored){}
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=REQUEST_PICK_CHAT_MEDIA||resultCode!=RESULT_OK||data==null)return;
+        Uri uri=data.getData();
+        if(uri==null||pendingMediaChatId<=0)return;
+        uploadChatMedia(pendingMediaChatId,uri,pendingMediaMessages,pendingMediaHistory);
+    }
+
+    private void uploadChatMedia(long chatId,Uri uri,LinearLayout messages,ScrollView history){
+        io.execute(()->{
+            HttpURLConnection connection=null;
+            int status=0;
+            JSONObject response=new JSONObject();
+            try{
+                String boundary="----kentgram-"+UUID.randomUUID().toString().replace("-","");
+                String fileName=queryDisplayName(uri);
+                String contentType=getContentResolver().getType(uri);
+                if(contentType==null)contentType="application/octet-stream";
+                connection=(HttpURLConnection)new URL(API+"/chats/"+chatId+"/media").openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(60000);
+                connection.setDoOutput(true);
+                connection.setChunkedStreamingMode(8192);
+                connection.setRequestProperty("Authorization","Bearer "+token);
+                connection.setRequestProperty("Accept","application/json");
+                connection.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
+                try(OutputStream output=connection.getOutputStream()){
+                    writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n\r\n");
+                    String safeName=fileName.replace("\\","_").replace("\"","_").replace("\r","").replace("\n","");
+                    writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\""+safeName+"\"\r\nContent-Type: "+contentType+"\r\n\r\n");
+                    try(InputStream input=getContentResolver().openInputStream(uri)){
+                        if(input==null)throw new IOException("Unable to open selected file");
+                        byte[] buffer=new byte[8192];
+                        int count;
+                        while((count=input.read(buffer))!=-1)output.write(buffer,0,count);
+                    }
+                    writeMultipart(output,"\r\n--"+boundary+"--\r\n");
+                }
+                status=connection.getResponseCode();
+                InputStream input=status>=200&&status<300?connection.getInputStream():connection.getErrorStream();
+                if(input!=null){
+                    ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+                    byte[] buffer=new byte[4096];
+                    int count;
+                    while((count=input.read(buffer))!=-1)bytes.write(buffer,0,count);
+                    try{response=new JSONObject(bytes.toString("UTF-8"));}catch(JSONException ignored){}
+                    input.close();
+                }
+            }catch(Exception error){
+                try{response.put("error","media_upload_failed");}catch(JSONException ignored){}
+            }finally{
+                if(connection!=null)connection.disconnect();
+            }
+            final int resultCode=status;
+            final JSONObject result=response;
+            runOnUiThread(()->{
+                if(resultCode>=200&&resultCode<300){
+                    if(currentChat==chatId&&messages!=null&&history!=null)refreshMessages(chatId,messages,history);
+                    toast("Файл отправлен");
+                }else{
+                    toast(result.optString("error","Не удалось отправить файл")+" ("+resultCode+")");
+                }
+                pendingMediaChatId=0;
+                pendingMediaMessages=null;
+                pendingMediaHistory=null;
+            });
+        });
+    }
+
+    private String queryDisplayName(Uri uri){
+        try(Cursor cursor=getContentResolver().query(uri,null,null,null,null)){
+            if(cursor!=null&&cursor.moveToFirst()){
+                int column=cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if(column>=0)return cursor.getString(column);
+            }
+        }catch(Exception ignored){}
+        return "attachment";
+    }
+
+    private void writeMultipart(OutputStream output,String value)throws IOException{
+        output.write(value.getBytes(StandardCharsets.UTF_8));
     }
 
     private interface Done{void accept(JSONObject value);}
