@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -43,6 +44,10 @@ public final class MainActivity extends Activity {
     private View highlightedMessage;
     private Runnable clearHighlightTask;
     private String activePeerUsername="", activePeerAvatarUrl="";
+    private JSONArray cachedChats;
+    private final HashMap<String,Bitmap> avatarCache=new HashMap<>();
+    private final HashSet<String> avatarLoading=new HashSet<>();
+    private final HashMap<String,ArrayList<ImageView>> avatarTargets=new HashMap<>();
     private boolean onChatScreen=false, onNewChatScreen=false;
 
     @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
@@ -495,87 +500,99 @@ public final class MainActivity extends Activity {
     }
 
     private void loadChats(LinearLayout chatsList){
-        TextView loading=label("Загружаем переписки…",13,MUTED,false);
-        loading.setGravity(Gravity.CENTER);
-        loading.setPadding(0,dp(22),0,dp(22));
-        chatsList.addView(loading);
+        if(cachedChats!=null){
+            renderChats(chatsList,cachedChats);
+        }else{
+            TextView loading=label("Загружаем переписки…",13,MUTED,false);
+            loading.setGravity(Gravity.CENTER);
+            loading.setPadding(0,dp(22),0,dp(22));
+            chatsList.addView(loading);
+        }
         requestGet("/chats",r->{
-            chatsList.removeAllViews();
-            JSONArray a=r.optJSONArray("chats");
-            if(a==null||a.length()==0){
-                LinearLayout empty=new LinearLayout(this);
-                empty.setOrientation(1);
-                empty.setGravity(Gravity.CENTER);
-                empty.setPadding(dp(22),dp(34),dp(22),dp(34));
-                empty.setBackground(round(PANEL,22));
-                TextView symbol=label("✦",30,ACCENT,true);
-                symbol.setGravity(Gravity.CENTER);
-                empty.addView(symbol);
-                TextView title=label("Здесь пока тихо",16,TEXT,true);
-                title.setGravity(Gravity.CENTER);
-                LinearLayout.LayoutParams etp=new LinearLayout.LayoutParams(-1,-2);
-                etp.topMargin=dp(10);
-                empty.addView(title,etp);
-                TextView hint=label("Начни новую переписку — она появится здесь.",13,MUTED,false);
-                hint.setGravity(Gravity.CENTER);
-                LinearLayout.LayoutParams ehp=new LinearLayout.LayoutParams(-1,-2);
-                ehp.topMargin=dp(5);
-                empty.addView(hint,ehp);
-                chatsList.addView(empty);
-                return;
-            }
-            for(int i=0;i<a.length();i++){
-                JSONObject c=a.optJSONObject(i);
-                if(c==null)continue;
-                long id=c.optLong("id");
-                String name=c.optString("peer_display_name");
-                if(name.isEmpty())name="@"+c.optString("peer_username");
-                String last=c.optString("last_message","Начните общение");
-                String peerUsername=c.optString("peer_username","");
-                String peerAvatarUrl=c.optString("peer_avatar_url","");
-                final long chatId=id;
-                final String peerName=name;
-                final String peerHandle=peerUsername;
-                final String peerAvatar=peerAvatarUrl;
-
-                LinearLayout card=new LinearLayout(this);
-                card.setGravity(Gravity.CENTER_VERTICAL);
-                card.setOrientation(LinearLayout.HORIZONTAL);
-                card.setPadding(dp(12),dp(12),dp(12),dp(12));
-                card.setBackground(round(PANEL,19));
-                TextView avatar=label(name.isEmpty()?"K":name.substring(0,1).toUpperCase(),18,0xFFEAF0FF,true);
-                avatar.setGravity(Gravity.CENTER);
-                avatar.setBackground(round(0xFF283957,50));
-                card.addView(avatar,new LinearLayout.LayoutParams(dp(50),dp(50)));
-
-                LinearLayout details=new LinearLayout(this);
-                details.setOrientation(1);
-                details.setPadding(dp(12),0,0,0);
-                details.addView(label(peerName,15,TEXT,true));
-                TextView preview=label(last.isEmpty()?"Нет сообщений":last,13,MUTED,false);
-                preview.setMaxLines(1);
-                preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
-                LinearLayout.LayoutParams dlp=new LinearLayout.LayoutParams(0,-2,1);
-                dlp.gravity=Gravity.CENTER_VERTICAL;
-                card.addView(details,dlp);
-                details.addView(preview);
-                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-                lp.bottomMargin=dp(8);
-                chatsList.addView(card,lp);
-                card.setAlpha(0f);card.setTranslationY(dp(7));
-                card.animate().alpha(1f).translationY(0f).setStartDelay(Math.min(i*32L,256L))
-                        .setDuration(190).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
-                card.setOnClickListener(v->openChat(chatId,peerName,peerHandle,peerAvatar));
-                card.setOnTouchListener((v,event)->{
-                    if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)
-                        v.animate().scaleX(.985f).scaleY(.985f).setDuration(70).start();
-                    else if(event.getAction()==android.view.MotionEvent.ACTION_UP ||
-                            event.getAction()==android.view.MotionEvent.ACTION_CANCEL)
-                        v.animate().scaleX(1f).scaleY(1f).setDuration(100).start();
-                    return false;
-                });
+            JSONArray fresh=r.optJSONArray("chats");
+            if(fresh!=null){
+                cachedChats=fresh;
+                renderChats(chatsList,fresh);
             }
         });
+    }
+
+    private void renderChats(LinearLayout chatsList,JSONArray chats){
+        chatsList.removeAllViews();
+        if(chats==null||chats.length()==0){
+            LinearLayout empty=new LinearLayout(this);
+            empty.setOrientation(1);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(22),dp(34),dp(22),dp(34));
+            empty.setBackground(round(PANEL,22));
+            TextView symbol=label("✦",30,ACCENT,true);
+            symbol.setGravity(Gravity.CENTER);
+            empty.addView(symbol);
+            TextView title=label("Здесь пока тихо",16,TEXT,true);
+            title.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams etp=new LinearLayout.LayoutParams(-1,-2);
+            etp.topMargin=dp(10);
+            empty.addView(title,etp);
+            TextView hint=label("Начни новую переписку — она появится здесь.",13,MUTED,false);
+            hint.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams ehp=new LinearLayout.LayoutParams(-1,-2);
+            ehp.topMargin=dp(5);
+            empty.addView(hint,ehp);
+            chatsList.addView(empty);
+            return;
+        }
+        for(int i=0;i<chats.length();i++){
+            JSONObject c=chats.optJSONObject(i);
+            if(c==null)continue;
+            long id=c.optLong("id");
+            String name=c.optString("peer_display_name");
+            if(name.isEmpty())name="@"+c.optString("peer_username");
+            String last=c.optString("last_message","Начните общение");
+            String peerUsername=c.optString("peer_username","");
+            String peerAvatarUrl=c.optString("peer_avatar_url","");
+            final long chatId=id;
+            final String peerName=name;
+            final String peerHandle=peerUsername;
+            final String peerAvatar=peerAvatarUrl;
+
+            LinearLayout card=new LinearLayout(this);
+            card.setGravity(Gravity.CENTER_VERTICAL);
+            card.setOrientation(LinearLayout.HORIZONTAL);
+            card.setPadding(dp(12),dp(12),dp(12),dp(12));
+            card.setBackground(round(PANEL,19));
+            TextView avatar=label(name.isEmpty()?"K":name.substring(0,1).toUpperCase(),18,0xFFEAF0FF,true);
+            avatar.setGravity(Gravity.CENTER);
+            avatar.setBackground(round(0xFF283957,50));
+            card.addView(avatar,new LinearLayout.LayoutParams(dp(50),dp(50)));
+
+            LinearLayout details=new LinearLayout(this);
+            details.setOrientation(1);
+            details.setPadding(dp(12),0,0,0);
+            details.addView(label(peerName,15,TEXT,true));
+            TextView preview=label(last.isEmpty()?"Нет сообщений":last,13,MUTED,false);
+            preview.setMaxLines(1);
+            preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams dlp=new LinearLayout.LayoutParams(0,-2,1);
+            dlp.gravity=Gravity.CENTER_VERTICAL;
+            card.addView(details,dlp);
+            details.addView(preview);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+            lp.bottomMargin=dp(8);
+            chatsList.addView(card,lp);
+            card.setAlpha(0f);
+            card.setTranslationY(dp(7));
+            card.animate().alpha(1f).translationY(0f).setStartDelay(Math.min(i*32L,256L))
+                    .setDuration(190).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+            card.setOnClickListener(v->openChat(chatId,peerName,peerHandle,peerAvatar));
+            card.setOnTouchListener((v,event)->{
+                if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)
+                    v.animate().scaleX(.985f).scaleY(.985f).setDuration(70).start();
+                else if(event.getAction()==android.view.MotionEvent.ACTION_UP ||
+                        event.getAction()==android.view.MotionEvent.ACTION_CANCEL)
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(100).start();
+                return false;
+            });
+        }
     }
 
     private void searchUsers(EditText query,View search,LinearLayout results){
@@ -815,11 +832,15 @@ public final class MainActivity extends Activity {
                 history.smoothScrollTo(0,Math.max(0,child.getTop()-dp(24)));
                 clearHighlightTask=()->{
                     if(highlightedMessage==child){
-                        child.animate().alpha(0.72f).setDuration(130).withEndAction(()->{
-                            child.setBackgroundColor(Color.TRANSPARENT);
-                            child.setAlpha(1f);
-                            highlightedMessage=null;
-                        }).start();
+                        ValueAnimator fade=ValueAnimator.ofObject(new android.animation.ArgbEvaluator(),0xFF263B55,0x00090B10);
+                        fade.setDuration(260);
+                        fade.addUpdateListener(animation->child.setBackground(round((Integer)animation.getAnimatedValue(),13)));
+                        fade.addListener(new android.animation.AnimatorListenerAdapter(){
+                            @Override public void onAnimationEnd(android.animation.Animator animation){
+                                if(highlightedMessage==child){child.setBackgroundColor(Color.TRANSPARENT);highlightedMessage=null;}
+                            }
+                        });
+                        fade.start();
                     }
                 };
                 uiHandler.postDelayed(clearHighlightTask,5000);
@@ -930,18 +951,31 @@ public final class MainActivity extends Activity {
     }
     private void loadChatAvatar(ImageView target,String url){
         if(target==null||url==null||url.trim().isEmpty())return;
+        Bitmap cached=avatarCache.get(url);
+        if(cached!=null){target.setImageBitmap(cached);return;}
+        ArrayList<ImageView> targets=avatarTargets.computeIfAbsent(url,key->new ArrayList<>());
+        targets.add(target);
+        if(!avatarLoading.add(url))return;
         io.execute(()->{
             HttpURLConnection connection=null;
+            Bitmap bitmap=null;
             try{
                 connection=(HttpURLConnection)new URL(url).openConnection();
                 connection.setConnectTimeout(6000);connection.setReadTimeout(6000);
                 connection.setInstanceFollowRedirects(true);
-                try(InputStream input=connection.getInputStream()){
-                    Bitmap bitmap=BitmapFactory.decodeStream(input);
-                    if(bitmap!=null)runOnUiThread(()->{if(!isFinishing()&&target.getWindowToken()!=null)target.setImageBitmap(bitmap);});
-                }
+                try(InputStream input=connection.getInputStream()){bitmap=BitmapFactory.decodeStream(input);}
             }catch(Exception ignored){}
             finally{if(connection!=null)connection.disconnect();}
+            final Bitmap loaded=bitmap;
+            runOnUiThread(()->{
+                avatarLoading.remove(url);
+                ArrayList<ImageView> waiting=avatarTargets.remove(url);
+                if(loaded!=null){
+                    avatarCache.put(url,loaded);
+                    if(waiting!=null)for(ImageView view:waiting)
+                        if(!isFinishing()&&view.getWindowToken()!=null)view.setImageBitmap(loaded);
+                }
+            });
         });
     }
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
