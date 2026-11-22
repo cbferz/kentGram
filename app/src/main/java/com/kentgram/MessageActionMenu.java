@@ -36,9 +36,9 @@ final class MessageActionMenu {
         menu.setGravity(Gravity.CENTER);
         menu.setPadding(dp(activity, 7), dp(activity, 7), dp(activity, 7), dp(activity, 7));
         GradientDrawable background = new GradientDrawable();
-        background.setColor(0xFF202A38);
+        background.setColor(0xFF1A2230);
         background.setCornerRadius(dp(activity, 18));
-        background.setStroke(dp(activity, 1), 0xFF35465D);
+        background.setStroke(dp(activity, 1), 0xFF3A4A64);
         menu.setBackground(background);
 
         PopupWindow popup = new PopupWindow(menu, dp(activity, canDelete ? 300 : 190),
@@ -59,7 +59,7 @@ final class MessageActionMenu {
             popup.dismiss();
         });
 
-        TextView reply = action(activity, "Ответить", 0xFF76A7FF);
+        TextView reply = action(activity, "Ответить", 0xFF9AB5FF);
         menu.addView(reply, new LinearLayout.LayoutParams(0, -1, 1));
         reply.setOnClickListener(v -> { popup.dismiss(); if (onReply != null) onReply.run(); });
 
