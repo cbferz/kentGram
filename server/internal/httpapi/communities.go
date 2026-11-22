@@ -173,3 +173,26 @@ func (a *API) transferCommunityOwnership(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"transferred": true})
 }
+
+func (a *API) joinPublicCommunityChat(w http.ResponseWriter, r *http.Request) {
+	var q struct { Username string `json:"username"` }
+	if decodeJSON(w, r, &q) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json")
+		return
+	}
+	q.Username = strings.TrimPrefix(strings.TrimSpace(q.Username), "@")
+	if !usernamePattern.MatchString(q.Username) {
+		writeError(w, http.StatusBadRequest, "invalid_chat_username")
+		return
+	}
+	chatID, err := a.db.JoinPublicCommunityChat(r.Context(), userID(r), q.Username)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "public_chat_not_found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "chat_join_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"joined": true, "chat_id": chatID})
+}
