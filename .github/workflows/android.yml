@@ -7,7 +7,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Only the newest commit on a branch may publish the rolling APK release.
 concurrency:
   group: kentgram-android-${{ github.ref }}
   cancel-in-progress: true
@@ -18,6 +17,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KENTGRAM_KEYSTORE_BASE64: ${{ secrets.KENTGRAM_KEYSTORE_BASE64 }}
+      KENTGRAM_KEYSTORE_PASSWORD: ${{ secrets.KENTGRAM_KEYSTORE_PASSWORD }}
+      KENTGRAM_KEY_ALIAS: ${{ secrets.KENTGRAM_KEY_ALIAS }}
+      KENTGRAM_KEY_PASSWORD: ${{ secrets.KENTGRAM_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,18 +32,35 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # GitHub-hosted Ubuntu runners already include the Android SDK.
-      # Avoid setup-android's obsolete "tools" package installation.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
+      - name: Prepare persistent signing key
+        id: signing
+        shell: bash
+        run: |
+          if [[ -z "$KENTGRAM_KEYSTORE_BASE64" || -z "$KENTGRAM_KEYSTORE_PASSWORD" || -z "$KENTGRAM_KEY_ALIAS" || -z "$KENTGRAM_KEY_PASSWORD" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Persistent signing is not configured. APK will be built for CI validation only and will not be published as an update."
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/kentgram-signing"
+          printf '%s' "$KENTGRAM_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/kentgram-signing/kentgram-upload.jks"
+          test -s "$RUNNER_TEMP/kentgram-signing/kentgram-upload.jks"
+          echo "KENTGRAM_KEYSTORE_PATH=$RUNNER_TEMP/kentgram-signing/kentgram-upload.jks" >> "$GITHUB_ENV"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
-      # Actions artifact storage is an account-wide quota and can be exhausted
-      # by unrelated repositories, which must not turn a successful build red.
+      - name: Verify APK signature
+        if: steps.signing.outputs.configured == 'true'
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         continue-on-error: true
@@ -49,11 +70,8 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      # Release assets do not consume Actions artifact storage. Publish main
-      # to its existing rolling tag and same-repository PR builds to an isolated
-      # PR tag, leaving the main download untouched.
-      - name: Publish APK as prerelease
-        if: (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+      - name: Publish signed APK as prerelease
+        if: steps.signing.outputs.configured == 'true' && ((github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -63,11 +81,11 @@ jobs:
             RELEASE_TITLE="kentGram redesign PR #${{ github.event.pull_request.number }}"
           else
             RELEASE_TAG="debug-latest"
-            RELEASE_TITLE="Debug APK (${GITHUB_SHA::7})"
+            RELEASE_TITLE="kentGram update (${GITHUB_SHA::7})"
           fi
           gh release delete "$RELEASE_TAG" --cleanup-tag --yes || true
           gh release create "$RELEASE_TAG" kentgram-debug.apk \
             --prerelease \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TITLE" \
-            --notes "Automated debug build of commit $GITHUB_SHA. Debug-signed, not for production distribution."
+            --notes "Persistent-key signed kentGram APK. versionCode is derived from GitHub Actions run number."
