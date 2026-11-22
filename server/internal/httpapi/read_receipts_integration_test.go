@@ -43,7 +43,11 @@ func TestChatReadCursorIsScopedAndMonotonic(t *testing.T) {
 
 	cursors := call(t, h, http.MethodGet, fmt.Sprintf("/api/v1/chats/%d/read", chatID), owner.Access, nil)
 	expectStatus(t, cursors, http.StatusOK)
-	if _, ok := asMap(t, asMap(t, cursors)["read_cursors"])[fmt.Sprint(peer.ID)]; !ok {
+	readCursors, ok := asMap(t, cursors)["read_cursors"].(map[string]any)
+	if !ok {
+		t.Fatal("read_cursors is not an object")
+	}
+	if _, ok := readCursors[fmt.Sprint(peer.ID)]; !ok {
 		t.Fatal("peer read cursor missing")
 	}
 
