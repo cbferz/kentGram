@@ -66,6 +66,22 @@ func TestRealtimeMessageAndTypingEvents(t *testing.T) {
 		t.Fatalf("sender session did not receive its own message event: %v", err)
 	}
 
+	read := call(t, handler, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/read", chatID), peer.Access,
+		map[string]int64{"last_read_message_id": messageID})
+	expectStatus(t, read, http.StatusOK)
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, payload, err = ownerSocket.ReadMessage()
+	if err != nil {
+		t.Fatalf("read receipt event: %v", err)
+	}
+	var readEvent realtimeEvent
+	if err := json.Unmarshal(payload, &readEvent); err != nil {
+		t.Fatalf("decode read receipt event: %v", err)
+	}
+	if readEvent.Type != "chat.read" || readEvent.ChatID != chatID || readEvent.MessageID != messageID || readEvent.UserID != peer.ID {
+		t.Fatalf("unexpected read receipt event: %+v", readEvent)
+	}
+
 	if err := peerSocket.WriteJSON(map[string]any{"type": "typing", "chat_id": chatID}); err != nil {
 		t.Fatalf("send typing event: %v", err)
 	}
