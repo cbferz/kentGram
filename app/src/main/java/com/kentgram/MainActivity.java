@@ -329,7 +329,7 @@ public final class MainActivity extends Activity {
         hero.setGravity(Gravity.CENTER);
         hero.setPadding(dp(20),dp(26),dp(20),dp(24));
         hero.setBackground(round(PANEL,26));
-        TextView mark=label("k",38,0xFF76A7FF,true);
+        TextView mark=label("k",38,0xFF9AB5FF,true);
         mark.setGravity(Gravity.CENTER);
         mark.setBackground(round(0xFF203A61,28));
         LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(dp(76),dp(76));
@@ -368,10 +368,10 @@ public final class MainActivity extends Activity {
         Button secondary=button("Создать аккаунт");
         primary.setTextSize(16);
         primary.setMinHeight(dp(60));
-        primary.setBackground(round(0xFF2878C7,40));
+        primary.setBackground(round(ACCENT,40));
         secondary.setTextSize(14);
         secondary.setMinHeight(dp(48));
-        secondary.setBackground(round(0xFF202A38,40));
+        secondary.setBackground(round(PANEL_ALT,40));
         form.addView(primary);
         LinearLayout.LayoutParams secondaryParams=(LinearLayout.LayoutParams)secondary.getLayoutParams();
         if(secondaryParams==null)secondaryParams=new LinearLayout.LayoutParams(-1,-2);
@@ -450,7 +450,7 @@ public final class MainActivity extends Activity {
         loadChats(chatsList);
 
         searchRow.setOnClickListener(v->{query.requestFocus();});
-        searchIcon.setOnClickListener(v->searchUsers(query,new Button(this),results));
+        searchIcon.setOnClickListener(v->searchUsers(query,searchIcon,results));
         query.setOnEditorActionListener((v,action,event)->{
             searchUsers(query,new Button(this),results);
             return true;
@@ -552,7 +552,7 @@ public final class MainActivity extends Activity {
         });
     }
 
-    private void searchUsers(EditText query,Button search,LinearLayout results){
+    private void searchUsers(EditText query,View search,LinearLayout results){
         String value=query.getText().toString().trim();
         if(value.startsWith("@"))value=value.substring(1).trim();
         if(value.length()<2){
@@ -561,8 +561,10 @@ public final class MainActivity extends Activity {
         }
         final String searchValue=value;
         search.setEnabled(false);
+        search.setAlpha(.55f);
         requestGet("/users/search?q="+enc(searchValue),r->{
             search.setEnabled(true);
+            search.setAlpha(1f);
             results.removeAllViews();
             JSONArray users=r.optJSONArray("users");
             if(users==null||users.length()==0){
@@ -736,7 +738,7 @@ public final class MainActivity extends Activity {
 
     private void setReply(long messageId,String body,String sender){
         replyToMessageId=messageId;replyToBody=body;replyToSender=sender;
-        if(replyPreview!=null){replyPreview.removeAllViews();replyPreview.addView(label(sender.isEmpty()?"Ответ на сообщение":"Ответ на @"+sender,12,0xFF76A7FF,true));replyPreview.addView(label(body,13,TEXT,false));replyPreview.setVisibility(View.VISIBLE);}
+        if(replyPreview!=null){replyPreview.removeAllViews();replyPreview.addView(label(sender.isEmpty()?"Ответ на сообщение":"Ответ на @"+sender,12,0xFF9AB5FF,true));replyPreview.addView(label(body,13,TEXT,false));replyPreview.setVisibility(View.VISIBLE);}
     }
     private void clearReply(){replyToMessageId=0;replyToBody="";replyToSender="";if(replyPreview!=null)replyPreview.setVisibility(View.GONE);}
     private void scrollToMessage(LinearLayout messages,ScrollView history,long targetID){
