@@ -68,7 +68,7 @@ func (a *API) deleteChatMessage(w http.ResponseWriter, r *http.Request) {
         writeError(w, http.StatusBadRequest, "invalid_message_id")
         return
     }
-    err = a.db.DeleteChatMessage(r.Context(), chatID, messageID, userID(r))
+    storageName, err := a.db.DeleteChatMessage(r.Context(), chatID, messageID, userID(r))
     if errors.Is(err, store.ErrNotFound) {
         writeError(w, http.StatusNotFound, "message_not_found")
         return
@@ -76,6 +76,9 @@ func (a *API) deleteChatMessage(w http.ResponseWriter, r *http.Request) {
     if err != nil {
         writeError(w, http.StatusInternalServerError, "message_delete_failed")
         return
+    }
+    if storageName != "" {
+        _ = os.Remove(filepath.Join(a.cfg.MediaDir, storageName))
     }
     a.publishChatEvent(r.Context(), chatID, realtimeEvent{Type:"message.deleted", ChatID:chatID, MessageID:messageID}, 0)
     writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
