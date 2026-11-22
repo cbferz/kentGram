@@ -789,8 +789,8 @@ public final class MainActivity extends Activity {
     private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl,String chatKind){
         getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         onChatScreen=true;onNewChatScreen=false;
-        activePeerUsername=peerUsername==null?"":peerUsername;
-        activePeerAvatarUrl=peerAvatarUrl==null?"":peerAvatarUrl;
+        activePeerUsername="direct".equals(chatKind)&&peerUsername!=null?peerUsername:"";
+        activePeerAvatarUrl="direct".equals(chatKind)&&peerAvatarUrl!=null?peerAvatarUrl:"";
         currentChat=id;
         base(peer);
         root.removeViewAt(1);
@@ -815,7 +815,10 @@ public final class MainActivity extends Activity {
         peerBlock.setPadding(dp(10),0,0,0);
         TextView peerTitle=label(peer,16,TEXT,true);
         peerBlock.addView(peerTitle);
-        peerBlock.addView(label(activePeerUsername.isEmpty()?"переписка":"@"+activePeerUsername,11,MUTED,false));
+        String chatSubtitle="direct".equals(chatKind)?
+                (activePeerUsername.isEmpty()?"переписка":"@"+activePeerUsername):
+                ("channel".equals(chatKind)?"канал":"группа");
+        peerBlock.addView(label(chatSubtitle,11,MUTED,false));
         top.addView(peerBlock,new LinearLayout.LayoutParams(0,-2,1));
         View.OnClickListener openPeer=v->{
             if(!activePeerUsername.isEmpty()){
