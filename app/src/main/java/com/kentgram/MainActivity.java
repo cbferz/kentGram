@@ -52,7 +52,7 @@ public final class MainActivity extends Activity {
     private LinearLayout replyPreview;
     private long replyToMessageId=0;
     private String replyToBody="", replyToSender="";
-    private long currentChat=0, activePeerID=0;
+    private long currentChat=0, activePeerID=0, activePeerReadCursor=0;
     private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
     private final HashMap<Long,ArrayDeque<Long>> replyQueues=new HashMap<>();
     private final HashSet<Long> sendingChats=new HashSet<>();
@@ -1094,6 +1094,7 @@ public final class MainActivity extends Activity {
                 if(currentChat!=id)return;
                 JSONObject cursors=readState.optJSONObject("read_cursors");
                 long peerRead=activePeerID>0&&cursors!=null?cursors.optLong(String.valueOf(activePeerID),0):0;
+                activePeerReadCursor=peerRead;
                 messages.removeAllViews();
                 long latestMessageId=0;
             if(a!=null)for(int i=0;i<a.length();i++){
@@ -1148,6 +1149,7 @@ public final class MainActivity extends Activity {
                     TextView receipt=label(messageId<=peerRead?"✓✓ Прочитано":"✓ Отправлено",10,
                             messageId<=peerRead?0xFF8FB4FF:MUTED,false);
                     receipt.setGravity(Gravity.RIGHT);
+                    receipt.setTag(Long.valueOf(messageId));
                     row.addView(receipt,new LinearLayout.LayoutParams(-1,-2));
                 }
                 bubble.setOnLongClickListener(v->{
@@ -1473,6 +1475,26 @@ public final class MainActivity extends Activity {
                                 if(activeChatsList!=null)renderChats(activeChatsList,fresh);
                             }
                         });
+                    }
+                }else if("chat.read".equals(type)&&currentChat==chatId&&
+                        event.optLong("user_id",0)==activePeerID&&activePeerID>0){
+                    activePeerReadCursor=Math.max(activePeerReadCursor,event.optLong("message_id",0));
+                    if(activeMessages!=null){
+                        for(int i=0;i<activeMessages.getChildCount();i++){
+                            View row=activeMessages.getChildAt(i);
+                            if(!(row instanceof LinearLayout))continue;
+                            LinearLayout messageRow=(LinearLayout)row;
+                            for(int j=0;j<messageRow.getChildCount();j++){
+                                View child=messageRow.getChildAt(j);
+                                if(child instanceof TextView&&child.getTag() instanceof Long){
+                                    long messageId=(Long)child.getTag();
+                                    if(messageId<=activePeerReadCursor){
+                                        ((TextView)child).setText("✓✓ Прочитано");
+                                        ((TextView)child).setTextColor(0xFF8FB4FF);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }else if("typing".equals(type)&&currentChat==chatId&&activeChatStatus!=null){
                     activeChatStatus.setText("печатает…");
