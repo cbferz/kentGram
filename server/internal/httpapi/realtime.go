@@ -52,12 +52,16 @@ func (h *realtimeHub) register(userID, sessionID int64, conn *websocket.Conn, ap
 	}
 	h.mu.Lock()
 	firstOnline := len(h.clients[userID]) == 0
+	if firstOnline {
+		h.presenceVersion[userID]++
+	}
 	if h.clients[userID] == nil {
 		h.clients[userID] = make(map[*realtimeClient]struct{})
 	}
 	h.clients[userID][client] = struct{}{}
+	version := h.presenceVersion[userID]
 	h.mu.Unlock()
-	return client, firstOnline
+	return client, firstOnline, version
 }
 
 // unregister returns true only when the user's final live connection closed.
