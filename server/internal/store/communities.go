@@ -190,3 +190,19 @@ func (s *Store) JoinPublicCommunityChat(ctx context.Context, userID int64, usern
 		RETURNING chat_id`, userID, strings.TrimPrefix(strings.TrimSpace(username), "@")).Scan(&chatID)
 	return chatID, norm(err)
 }
+
+ // RemoveCommunityMember enforces a strict hierarchy: admins can remove regular
+ // members; only the owner can remove admins. No role can remove the owner.
+func (s *Store) RemoveCommunityMember(ctx context.Context, chatID, actorID, targetID int64) error {
+	tag, err := s.Pool.Exec(ctx, `DELETE FROM chat_members target
+		USING chat_members actor, chats c
+		WHERE target.chat_id=$1 AND target.user_id=$3 AND target.user_id<>$2
+		  AND actor.chat_id=$1 AND actor.user_id=$2
+		  AND c.id=$1 AND c.kind IN ('group','channel')
+		  AND actor.role IN ('owner','admin')
+		  AND (actor.role='owner' OR target.role='member')`,
+		chatID, actorID, targetID)
+	if err != nil { return err }
+	if tag.RowsAffected() == 0 { return ErrNotFound }
+	return nil
+}
