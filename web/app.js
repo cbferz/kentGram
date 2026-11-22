@@ -19,6 +19,17 @@
     return data;
   }
   let refreshing = null;
+  async function protectedFetch(url) {
+    const send = () => fetch(url,{headers:{Authorization:"Bearer "+state.access}});
+    let response = await send();
+    if(response.status===401 && state.refresh) {
+      if(!refreshing) refreshing=(async()=>{const data=await raw("/auth/refresh",{method:"POST",auth:false,headers:{"Content-Type":"application/json"},body:JSON.stringify({refresh_token:state.refresh})});saveTokens(data);})().finally(()=>refreshing=null);
+      await refreshing;
+      response=await send();
+    }
+    if(!response.ok)throw new Error("media_request_failed");
+    return response;
+  }
   async function api(path, options={}) {
     try { return await raw(path,options); }
     catch (error) {
@@ -69,8 +80,8 @@
     if(m.forwarded_from_username)box.append(node("span","sender","Переслано от @"+m.forwarded_from_username));
     if(m.media_id) {
       const url=API+m.media_url;
-      if((m.media_mime||"").startsWith("image/")){const img=node("img");img.alt=m.media_name||"Изображение";img.loading="lazy";img.src=url;img.addEventListener("click",()=>window.open(url,"_blank","noopener"));box.append(img);}
-      else {const link=node("a","body",m.media_name||"Открыть вложение");link.href=url;link.target="_blank";link.rel="noopener";link.addEventListener("click",async ev=>{ev.preventDefault();try{const res=await fetch(url,{headers:{Authorization:"Bearer "+state.access}});if(!res.ok)throw new Error();const blob=await res.blob();const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=m.media_name||"attachment";a.click();URL.revokeObjectURL(a.href);}catch{toast("Не удалось скачать файл");}});box.append(link);}
+      if((m.media_mime||"").startsWith("image/")){const img=node("img");img.alt=m.media_name||"Изображение";img.loading="lazy";box.append(img);protectedFetch(url).then(res=>res.blob()).then(blob=>{if(!img.isConnected)return;const objectURL=URL.createObjectURL(blob);img.src=objectURL;img.addEventListener("load",()=>URL.revokeObjectURL(objectURL),{once:true});}).catch(()=>{img.alt="Не удалось загрузить изображение";});}
+      else {const link=node("a","body",m.media_name||"Открыть вложение");link.href="#";link.addEventListener("click",async ev=>{ev.preventDefault();try{const res=await protectedFetch(url);const blob=await res.blob();const objectURL=URL.createObjectURL(blob);const a=document.createElement("a");a.href=objectURL;a.download=m.media_name||"attachment";a.click();setTimeout(()=>URL.revokeObjectURL(objectURL),1000);}catch{toast("Не удалось скачать файл");}});box.append(link);}
     }
     if(m.body)box.append(node("div","body",m.body));
     const date=new Date(m.created_at);box.append(node("time","",Number.isNaN(date.getTime())?"":date.toLocaleString("ru-RU",{hour:"2-digit",minute:"2-digit"})));
