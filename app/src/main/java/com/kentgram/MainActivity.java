@@ -935,19 +935,55 @@ public final class MainActivity extends Activity {
     }
 
     private void loadCommunityMembers(long chatId){
-        requestGet("/chats/"+chatId+"/members",result->{
-            JSONArray members=result.optJSONArray("members");
-            if(members==null||members.length()==0){toast("Участников пока нет");return;}
-            String[] labels=new String[members.length()];
-            for(int i=0;i<members.length();i++){
-                JSONObject member=members.optJSONObject(i);
-                if(member==null){labels[i]="Участник";continue;}
-                String display=member.optString("display_name","");
-                String username=member.optString("username","");
-                String name=display.isEmpty()?"@"+username:display+" (@"+username+")";
-                labels[i]=name+" · "+member.optString("role","member");
-            }
-            new AlertDialog.Builder(this).setTitle("Участники").setItems(labels,null).setPositiveButton("Закрыть",null).show();
+        requestGet("/chats/"+chatId,details->{
+            String viewerRole=details.optString("role","member");
+            boolean canManage="owner".equals(viewerRole)||"admin".equals(viewerRole);
+            boolean isOwner="owner".equals(viewerRole);
+            requestGet("/chats/"+chatId+"/members",result->{
+                JSONArray members=result.optJSONArray("members");
+                if(members==null||members.length()==0){toast("Участников пока нет");return;}
+                String[] labels=new String[members.length()];
+                for(int i=0;i<members.length();i++){
+                    JSONObject member=members.optJSONObject(i);
+                    if(member==null){labels[i]="Участник";continue;}
+                    String display=member.optString("display_name","");
+                    String username=member.optString("username","");
+                    String name=display.isEmpty()?"@"+username:display+" (@"+username+")";
+                    labels[i]=name+" · "+member.optString("role","member");
+                }
+                new AlertDialog.Builder(this).setTitle("Участники").setItems(labels,(list,index)->{
+                    if(!canManage)return;
+                    JSONObject target=members.optJSONObject(index);
+                    if(target==null)return;
+                    String targetRole=target.optString("role","member");
+                    if("owner".equals(targetRole))return;
+                    long targetID=target.optLong("user_id");
+                    if(targetID<=0)return;
+                    String[] actions;
+                    if(isOwner&&"admin".equals(targetRole))
+                        actions=new String[]{"Снять администратора","Удалить администратора"};
+                    else if(isOwner)
+                        actions=new String[]{"Назначить администратором","Удалить участника"};
+                    else if("member".equals(targetRole))
+                        actions=new String[]{"Удалить участника"};
+                    else return;
+                    new AlertDialog.Builder(this).setTitle(labels[index]).setItems(actions,(actionDialog,action)->{
+                        if(isOwner&&action==0){
+                            JSONObject body=new JSONObject();
+                            try{body.put("role","admin".equals(targetRole)?"member":"admin");}catch(JSONException ignored){}
+                            requestMethod("PATCH","/chats/"+chatId+"/members/"+targetID+"/role",body,true,updated->{
+                                toast("Роль обновлена");
+                                loadCommunityMembers(chatId);
+                            });
+                        }else{
+                            requestDelete("/chats/"+chatId+"/members/"+targetID,removed->{
+                                toast("Участник удалён");
+                                loadCommunityMembers(chatId);
+                            });
+                        }
+                    }).setNegativeButton("Отмена",null).show();
+                }).setPositiveButton("Закрыть",null).show();
+            });
         });
     }
 
