@@ -50,11 +50,12 @@ public final class MainActivity extends Activity {
     private final HashMap<String,ArrayList<ImageView>> avatarTargets=new HashMap<>();
     private boolean onChatScreen=false, onNewChatScreen=false;
 
-    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
+    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
 
     private void base(String title){
         root=new LinearLayout(this);
         root.setOrientation(1);
+        root.setFocusableInTouchMode(true);
         root.setBackgroundColor(BG);
 
         top=new LinearLayout(this);
@@ -667,6 +668,7 @@ public final class MainActivity extends Activity {
         });
     }
     private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl){
+        getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
         onChatScreen=true;onNewChatScreen=false;
         activePeerUsername=peerUsername==null?"":peerUsername;
         activePeerAvatarUrl=peerAvatarUrl==null?"":peerAvatarUrl;
@@ -741,7 +743,10 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(44),dp(44));
         bar.addView(send,sp);
         composerBox.addView(bar);
-        root.addView(composerBox);
+        composerBox.setVisibility(View.VISIBLE);
+        composerBox.setFocusable(false);
+        root.addView(composerBox,new LinearLayout.LayoutParams(-1,-2));
+        composerBox.bringToFront();
 
         send.setOnClickListener(v->sendMessage(id,messages,history));
         composer.setOnEditorActionListener((v,a,e)->{
