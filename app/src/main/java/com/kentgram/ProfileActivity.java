@@ -9,6 +9,8 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.widget.*;
 import android.content.SharedPreferences;
+import android.content.Intent;
+import android.net.Uri;
 import org.json.JSONObject;
 import java.io.*;
 import java.net.*;
@@ -19,6 +21,8 @@ import java.util.concurrent.Executors;
 public final class ProfileActivity extends Activity {
     private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
     private static final int BG=0xFF090B10,PANEL=0xFF121720,TEXT=0xFFF4F6FA,MUTED=0xFF8994A6,BLUE=0xFF648DFF;
+    private static final int PICK_AVATAR=7301;
+    private static final int MAX_AVATAR_BYTES=5*1024*1024;
     private final ExecutorService io=Executors.newFixedThreadPool(2);
     private String token="", username="";
     private boolean own, following;
@@ -26,7 +30,7 @@ public final class ProfileActivity extends Activity {
     private LinearLayout content;
     private ImageView avatar;
     private EditText displayName,bio,avatarUrl;
-    private Button followButton,saveButton;
+    private Button followButton,saveButton,avatarUploadButton;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -150,6 +154,78 @@ public final class ProfileActivity extends Activity {
             long followers=result.optLong("followers"),followingCount=result.optLong("following");
             content.addView(label(followers+" подписчиков  ·  "+followingCount+" подписок",14,MUTED,false));
             loadAvatar(result.optString("avatar_url",""));
+        });
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data) {
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=PICK_AVATAR || resultCode!=RESULT_OK || data==null || data.getData()==null)return;
+        Uri uri=data.getData();
+        if(avatarUploadButton!=null)avatarUploadButton.setEnabled(false);
+        io.execute(()->{
+            try(InputStream input=getContentResolver().openInputStream(uri);ByteArrayOutputStream output=new ByteArrayOutputStream()){
+                if(input==null)throw new IOException("file_unavailable");
+                byte[] buffer=new byte[8192];int total=0,n;
+                while((n=input.read(buffer))!=-1){
+                    total+=n;
+                    if(total>MAX_AVATAR_BYTES)throw new IOException("file_too_large");
+                    output.write(buffer,0,n);
+                }
+                String mime=getContentResolver().getType(uri);
+                if(!"image/jpeg".equals(mime) && !"image/png".equals(mime))
+                    throw new IOException("unsupported_format");
+                uploadAvatar(output.toByteArray(),mime);
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    if(avatarUploadButton!=null)avatarUploadButton.setEnabled(true);
+                    String message=e.getMessage();
+                    toast("Не удалось открыть фото: "+("file_too_large".equals(message)?"максимум 5 МБ":
+                            "unsupported_format".equals(message)?"нужен JPEG или PNG":"ошибка чтения"));
+                });
+            }
+        });
+    }
+
+    private void uploadAvatar(byte[] bytes,String mime) {
+        io.execute(()->{
+            JSONObject result=new JSONObject();int status=0;
+            String boundary="kentgram-"+System.currentTimeMillis();
+            try{
+                HttpURLConnection c=(HttpURLConnection)new URL(API+"/me/avatar").openConnection();
+                c.setRequestMethod("POST");c.setDoOutput(true);
+                c.setConnectTimeout(15000);c.setReadTimeout(30000);
+                c.setRequestProperty("Accept","application/json");
+                c.setRequestProperty("Authorization","Bearer "+token);
+                c.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
+                String filename="image/jpeg".equals(mime)?"avatar.jpg":"avatar.png";
+                try(OutputStream out=c.getOutputStream()){
+                    out.write(("--"+boundary+"\\r\\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("Content-Disposition: form-data; name=\\"avatar\\"; filename=\\""+filename+"\\"\\r\\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("Content-Type: "+mime+"\\r\\n\\r\\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(bytes);
+                    out.write(("\\r\\n--"+boundary+"--\\r\\n").getBytes(StandardCharsets.UTF_8));
+                }
+                status=c.getResponseCode();
+                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
+                if(in!=null)try(InputStream stream=in;ByteArrayOutputStream output=new ByteArrayOutputStream()){
+                    byte[] buffer=new byte[4096];int n;while((n=stream.read(buffer))!=-1)output.write(buffer,0,n);
+                    result=new JSONObject(output.toString("UTF-8"));
+                }
+                c.disconnect();
+            }catch(Exception e){try{result.put("error","upload_failed");}catch(Exception ignored){}}
+            final JSONObject response=result;final int code=status;
+            runOnUiThread(()->{
+                if(avatarUploadButton!=null)avatarUploadButton.setEnabled(true);
+                if(code>=200&&code<300){
+                    String url=response.optString("avatar_url","");
+                    avatarUrl.setText(url);
+                    loadAvatar(url);
+                    toast("Фото профиля загружено");
+                }else{
+                    KentDialog.showMessage(this,"Не удалось загрузить фото",
+                            response.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
+                }
+            });
         });
     }
 
