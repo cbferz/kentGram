@@ -868,29 +868,31 @@ public final class MainActivity extends Activity {
                     String emoji=reaction.optString("emoji","");
                     int count=reaction.optInt("count",0);
                     boolean selected=reaction.optBoolean("mine");
-                    TextView chip=label(emoji+" "+count,12,selected?0xFFBFD0FF:TEXT,true);
-                    chip.setPadding(dp(9),dp(5),dp(9),dp(5));
-                    chip.setBackground(round(selected?0xFF263B5B:PANEL_ALT,14));
-                    LinearLayout.LayoutParams chipParams=new LinearLayout.LayoutParams(-2,-2);
-                    chipParams.setMargins(dp(2),dp(2),dp(3),dp(2));
+                    TextView chip=label(emoji+"  "+count,12,selected?0xFFDCE7FF:0xFFB7C1D0,true);
+                    chip.setGravity(Gravity.CENTER);
+                    chip.setIncludeFontPadding(false);
+                    chip.setPadding(dp(10),dp(6),dp(10),dp(6));
+                    android.graphics.drawable.GradientDrawable chipBackground=round(selected?0xFF263B5B:0xFF171E29,18);
+                    chipBackground.setStroke(dp(1),selected?0xFF648DFF:0xFF303B4C);
+                    chip.setBackground(chipBackground);
+                    LinearLayout.LayoutParams chipParams=new LinearLayout.LayoutParams(-2,dp(30));
+                    chipParams.setMargins(dp(3),dp(3),dp(3),dp(2));
                     reactionRow.addView(chip,chipParams);
                     chip.setOnClickListener(v->toggleReaction(id,messageId,emoji,messages,history));
                 }
-                TextView addReaction=label("＋",13,MUTED,true);
-                addReaction.setGravity(Gravity.CENTER);
-                addReaction.setPadding(dp(9),dp(5),dp(9),dp(5));
-                addReaction.setBackground(round(PANEL_ALT,14));
-                reactionRow.addView(addReaction);
-                addReaction.setOnClickListener(v->showReactionPicker(addReaction,id,messageId,messages,history));
-                LinearLayout.LayoutParams reactionParams=new LinearLayout.LayoutParams(-1,-2);
-                reactionParams.gravity=mine?Gravity.RIGHT:Gravity.LEFT;
-                row.addView(reactionRow,reactionParams);
+                if(reactionRow.getChildCount()>0){
+                    LinearLayout.LayoutParams reactionParams=new LinearLayout.LayoutParams(-1,-2);
+                    reactionParams.gravity=mine?Gravity.RIGHT:Gravity.LEFT;
+                    reactionParams.setMargins(0,dp(1),0,dp(2));
+                    row.addView(reactionRow,reactionParams);
+                }
 
                 bubble.setOnLongClickListener(v->{
                     MessageActionMenu.show(this,bubble,body,mine,
                             ()->confirmDeleteMessage(id,messageId,messages,history),
                             ()->setReply(messageId,body,m.optString("sender_username","")),
-                            ()->editMessage(id,messageId,body,messages,history));
+                            ()->editMessage(id,messageId,body,messages,history),
+                            emoji->toggleReaction(id,messageId,emoji,messages,history));
                     return true;
                 });
                 messages.addView(row);
