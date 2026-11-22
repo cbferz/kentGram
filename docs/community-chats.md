@@ -74,3 +74,18 @@ adopt the default empty metadata and `member` role.
 - A read cursor is clamped to the latest non-deleted message in that chat.
 - Merely fetching message history does not mark messages as read.
 - Advancing a cursor emits a `chat.read` WebSocket event to the chat's current members.
+
+
+## Media attachments
+
+- `POST /api/v1/chats/{chatID}/media` accepts multipart fields `file` and optional `caption`.
+- Initial allowlist: JPEG, PNG, and PDF; maximum upload size is 20 MiB.
+- Images are dimension-limited and validated from their actual file bytes.
+- The API stores files under `MEDIA_DIR`; Compose persists this directory in the
+  `kentgram_media` volume.
+- Message history includes `media_id`, `media_url`, `media_mime`,
+  `media_name`, and `media_size`.
+- `GET /api/v1/chats/{chatID}/media/{mediaID}` requires current chat membership.
+  Deleted messages no longer expose their media.
+- Only channel owners and admins can publish attachments, matching channel text
+  posting permissions.
