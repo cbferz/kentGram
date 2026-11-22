@@ -37,8 +37,8 @@ public final class MainActivity extends Activity {
     private static final int BG=0xFF090B10,PANEL=0xFF121720,TEXT=0xFFF4F6FA,MUTED=0xFF8994A6,ACCENT=0xFF648DFF,PANEL_ALT=0xFF1A2230;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private OkHttpClient realtimeHttp;
-    private WebSocket realtimeSocket;
-    private boolean realtimeConnecting=false, realtimeReconnectScheduled=false;
+    private volatile WebSocket realtimeSocket;
+    private volatile boolean realtimeConnecting=false, realtimeReconnectScheduled=false;
     private Runnable realtimeReconnectTask;
     private LinearLayout activeMessages, activeChatsList;
     private ScrollView activeHistory;
