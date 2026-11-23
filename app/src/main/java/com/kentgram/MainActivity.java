@@ -43,7 +43,7 @@ public final class MainActivity extends Activity {
     private OkHttpClient realtimeHttp;
     private volatile WebSocket realtimeSocket;
     private volatile boolean realtimeConnecting=false, realtimeReconnectScheduled=false;
-    private volatile boolean realtimeSyncInFlight=false;
+    private volatile boolean realtimeSyncInFlight=false, refreshingAccessToken=false;
     private Runnable realtimeReconnectTask;
     private LinearLayout activeMessages, activeChatsList;
     private ScrollView activeHistory;
@@ -1824,13 +1824,7 @@ public final class MainActivity extends Activity {
                 if(realtimeSocket==socket)realtimeSocket=null;
                 realtimeConnecting=false;
                 if(response!=null&&response.code()==401){
-                    runOnUiThread(()->{
-                        prefs.edit().clear().apply();
-                        token="";
-                        stopRealtime();
-                        showAuth();
-                        toast("Сессия завершена. Войдите снова.");
-                    });
+                    refreshRealtimeSession();
                 }else{
                     scheduleRealtimeReconnect();
                 }
@@ -1873,6 +1867,49 @@ public final class MainActivity extends Activity {
                 }
             }
         },(error,status)->realtimeSyncInFlight=false);
+    }
+
+    private void refreshRealtimeSession(){
+        if(token.isEmpty()||prefs==null)return;
+        if(refreshingAccessToken)return;
+        String refreshToken=prefs.getString("refresh_token","");
+        if(refreshToken.isEmpty()){
+            expireLocalSession();
+            return;
+        }
+        refreshingAccessToken=true;
+        JSONObject body=new JSONObject();
+        try{body.put("refresh_token",refreshToken);}catch(JSONException ignored){}
+        requestMethod("POST","/auth/refresh",body,false,result->{
+            refreshingAccessToken=false;
+            String nextAccess=result.optString("access_token","");
+            String nextRefresh=result.optString("refresh_token",refreshToken);
+            if(nextAccess.isEmpty()){
+                expireLocalSession();
+                return;
+            }
+            token=nextAccess;
+            prefs.edit().putString("access_token",nextAccess)
+                    .putString("refresh_token",nextRefresh).apply();
+            ensureRealtimeConnected();
+        },(error,status)->{
+            refreshingAccessToken=false;
+            if(status==401||status==403){
+                expireLocalSession();
+            }else{
+                scheduleRealtimeReconnect();
+            }
+        });
+    }
+
+    private void expireLocalSession(){
+        runOnUiThread(()->{
+            if(prefs!=null)prefs.edit().clear().apply();
+            token="";
+            stopRealtime();
+            showAuth();
+            toast("Сессия завершена. Войдите снова.");
+        });
     }
 
     private void scheduleRealtimeReconnect(){
