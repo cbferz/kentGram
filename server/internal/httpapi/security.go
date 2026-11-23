@@ -88,6 +88,33 @@ func (l *ipRateLimiter) middleware(next http.Handler) http.Handler {
 	})
 }
 
+const webClientOrigin = "https://web.kentgram.tendercheck.pro"
+
+// webCORS grants browser access only to the production web client. Native
+// Android requests without an Origin header continue to work unchanged.
+func webCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin != "" {
+			if origin != webClientOrigin {
+				writeError(w, http.StatusForbidden, "origin_not_allowed")
+				return
+			}
+			h := w.Header()
+			h.Set("Access-Control-Allow-Origin", webClientOrigin)
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			h.Set("Access-Control-Max-Age", "600")
+			h.Add("Vary", "Origin")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()

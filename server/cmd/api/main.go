@@ -34,7 +34,8 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		// Long-lived WebSocket connections manage write deadlines per frame.
+		WriteTimeout:      0,
 		IdleTimeout:       60 * time.Second,
 	}
 

@@ -43,6 +43,8 @@ func newTestAPI(t *testing.T) *API {
 
 	a := New(db, config.Config{
 		JWTSecret:  strings.Repeat("s", 40),
+		MediaDir:   t.TempDir(),
+		AvatarDir:  t.TempDir(),
 		AccessTTL:  15 * time.Minute,
 		RefreshTTL: 24 * time.Hour,
 	})

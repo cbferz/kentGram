@@ -48,3 +48,44 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+
+func TestWebCORSAllowsOnlyConfiguredOrigin(t *testing.T) {
+	handler := webCORS(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	allowed := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodOptions, "/api/v1/chats", nil)
+	request.Header.Set("Origin", webClientOrigin)
+	request.Header.Set("Access-Control-Request-Method", "POST")
+	handler.ServeHTTP(allowed, request)
+	if allowed.Code != http.StatusNoContent {
+		t.Fatalf("allowed preflight status = %d, want %d", allowed.Code, http.StatusNoContent)
+	}
+	if got := allowed.Header().Get("Access-Control-Allow-Origin"); got != webClientOrigin {
+		t.Fatalf("allow origin = %q, want %q", got, webClientOrigin)
+	}
+
+	denied := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	request.Header.Set("Origin", "https://untrusted.example")
+	handler.ServeHTTP(denied, request)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("untrusted origin status = %d, want %d", denied.Code, http.StatusForbidden)
+	}
+	if got := denied.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("untrusted origin unexpectedly received CORS permission %q", got)
+	}
+}
+
+func TestWebCORSKeepsNativeRequestsWorking(t *testing.T) {
+	handler := webCORS(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("native request status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}

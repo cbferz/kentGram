@@ -1,28 +1,54 @@
 package com.kentgram;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.animation.ValueAnimator;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
 import android.content.SharedPreferences;
 import android.content.Intent;
+import android.net.Uri;
+import android.database.Cursor;
+import android.provider.OpenableColumns;
 import org.json.*;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.WebSocket;
+import okhttp3.WebSocketListener;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.UUID;
 
 public final class MainActivity extends Activity {
     private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
-    private static final int BG=0xFF0D1118,PANEL=0xFF151C27,TEXT=0xFFF4F7FB,MUTED=0xFF9AA9BC;
+    private static final int BG=0xFF090B10,PANEL=0xFF121720,TEXT=0xFFF4F6FA,MUTED=0xFF8994A6,ACCENT=0xFF648DFF,PANEL_ALT=0xFF1A2230;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
+    private OkHttpClient realtimeHttp;
+    private volatile WebSocket realtimeSocket;
+    private volatile boolean realtimeConnecting=false, realtimeReconnectScheduled=false;
+    private Runnable realtimeReconnectTask;
+    private LinearLayout activeMessages, activeChatsList;
+    private ScrollView activeHistory;
+    private TextView activeChatStatus, activePinnedBanner;
+    private String activeChatSubtitle="";
+    private long lastTypingSentAt=0;
     private SharedPreferences prefs;
     private String token="";
     private LinearLayout root,content,top,navBar;
@@ -30,28 +56,78 @@ public final class MainActivity extends Activity {
     private LinearLayout replyPreview;
     private long replyToMessageId=0;
     private String replyToBody="", replyToSender="";
-    private long currentChat=0;
+    private volatile long currentChat=0;
+    private long activePeerID=0, activePeerReadCursor=0;
+    private static final int REQUEST_PICK_CHAT_MEDIA=4101;
+    private long pendingMediaChatId=0;
+    private String pendingMediaCaption="";
+    private LinearLayout pendingMediaMessages;
+    private ScrollView pendingMediaHistory;
     private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
     private final HashMap<Long,ArrayDeque<Long>> replyQueues=new HashMap<>();
     private final HashSet<Long> sendingChats=new HashSet<>();
+    private final Handler uiHandler=new Handler(Looper.getMainLooper());
+    private View highlightedMessage;
+    private Runnable clearHighlightTask;
+    private String activePeerUsername="", activePeerAvatarUrl="";
+    private JSONArray cachedChats;
+    private final HashMap<String,Bitmap> avatarCache=new HashMap<>();
+    private final HashMap<String,Bitmap> mediaCache=new HashMap<>();
+    private final HashMap<String,ArrayList<ImageView>> mediaTargets=new HashMap<>();
+    private final HashSet<String> mediaLoading=new HashSet<>();
+    private final HashSet<String> avatarLoading=new HashSet<>();
+    private final HashMap<String,ArrayList<ImageView>> avatarTargets=new HashMap<>();
+    private boolean onChatScreen=false, onNewChatScreen=false;
 
-    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
+    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
 
     private void base(String title){
-        root=new LinearLayout(this);root.setOrientation(1);root.setBackgroundColor(BG);
-        top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(18),dp(12),dp(18),dp(12));top.setBackground(round(PANEL,22));
-        TextView h=label(title,21,TEXT,true);top.addView(h,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams headerParams=new LinearLayout.LayoutParams(-1,-2);headerParams.setMargins(dp(10),dp(8),dp(10),dp(4));root.addView(top,headerParams);
-        ScrollView scroll=new ScrollView(this);content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(16),dp(16),dp(16),dp(16));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        activeChatsList=null;
+        activeMessages=null;
+        activeHistory=null;
+        activeChatStatus=null;
+        activePinnedBanner=null;
+        root=new LinearLayout(this);
+        root.setOrientation(1);
+        root.setFocusableInTouchMode(true);
+        root.setBackgroundColor(BG);
+
+        top=new LinearLayout(this);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(dp(20),dp(16),dp(20),dp(12));
+        top.setBackgroundColor(Color.TRANSPARENT);
+        TextView h=label(title,23,TEXT,true);
+        h.setLetterSpacing(-0.025f);
+        top.addView(h,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout.LayoutParams headerParams=new LinearLayout.LayoutParams(-1,-2);
+        headerParams.setMargins(dp(2),dp(4),dp(2),dp(2));
+        root.addView(top,headerParams);
+
+        ScrollView scroll=new ScrollView(this);
+        scroll.setClipToPadding(false);
+        scroll.setFillViewport(true);
+        content=new LinearLayout(this);
+        content.setOrientation(1);
+        content.setPadding(dp(18),dp(12),dp(18),dp(22));
+        scroll.addView(content);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+
         buildNavigation(title);
         setContentView(root);
+        content.setAlpha(0f);
+        content.setTranslationY(dp(9));
+        content.animate().alpha(1f).translationY(0f).setDuration(210)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        if(navBar!=null){navBar.setAlpha(0f);navBar.animate().alpha(1f).setDuration(190).start();}
     }
 
     private void buildNavigation(String title){
         navBar=new LinearLayout(this);
         navBar.setGravity(Gravity.CENTER);
         navBar.setOrientation(LinearLayout.HORIZONTAL);
-        navBar.setPadding(dp(5),dp(5),dp(5),dp(5));
-        navBar.setBackground(round(0xFF202124,32));
+        navBar.setPadding(dp(7),dp(7),dp(7),dp(7));
+        navBar.setBackground(round(0xFF151B25,30));
+        navBar.setElevation(dp(8));
 
         String[] labels={"Чаты","Контакты","Лента","Настройки","Профиль"};
         String[] icons={"▤","♧","▧","⚙","●"};
@@ -65,12 +141,12 @@ public final class MainActivity extends Activity {
             LinearLayout item=new LinearLayout(this);
             item.setGravity(Gravity.CENTER);
             item.setOrientation(1);
-            item.setPadding(dp(1),dp(5),dp(1),dp(5));
-            item.setBackground(round(selected?0xFF293246:Color.TRANSPARENT,26));
+            item.setPadding(dp(2),dp(7),dp(2),dp(7));
+            item.setBackground(round(selected?0xFF253653:Color.TRANSPARENT,22));
 
-            TextView icon=label(icons[i],22,selected?0xFF5685FF:0xFFE4E8F0,true);
+            TextView icon=label(icons[i],20,selected?ACCENT:0xFF9AA5B5,true);
             icon.setGravity(Gravity.CENTER);
-            TextView text=label(labels[i],10,selected?0xFF5685FF:0xFFE4E8F0,true);
+            TextView text=label(labels[i],10,selected?0xFFE8EEFF:0xFF9AA5B5,true);
             text.setGravity(Gravity.CENTER);
             text.setMaxLines(1);
             text.setIncludeFontPadding(false);
@@ -78,15 +154,24 @@ public final class MainActivity extends Activity {
             item.addView(text);
 
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(58),1);
-            lp.setMargins(dp(1),0,dp(1),0);
+            lp.setMargins(dp(2),0,dp(2),0);
             navBar.addView(item,lp);
             item.setContentDescription(labels[i]);
             item.setOnClickListener(v->navigate(screen));
+            item.setOnTouchListener((v,event)->{
+                if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)
+                    v.animate().scaleX(.96f).scaleY(.96f).setDuration(80).start();
+                else if(event.getAction()==android.view.MotionEvent.ACTION_UP ||
+                        event.getAction()==android.view.MotionEvent.ACTION_CANCEL)
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(110).start();
+                return false;
+            });
         }
         LinearLayout.LayoutParams navParams=new LinearLayout.LayoutParams(-1,-2);
-        navParams.setMargins(dp(10),dp(4),dp(10),dp(7));
+        navParams.setMargins(dp(14),dp(5),dp(14),dp(10));
         root.addView(navBar,navParams);
     }
+
     private void navigate(String screen){
         switch(screen){
             case "chats":showChats();break;
@@ -98,59 +183,302 @@ public final class MainActivity extends Activity {
     }
     private void showContacts(){
         base("Контакты");
-        TextView heading=label("Мои контакты",17,TEXT,true);content.addView(heading);
-        LinearLayout contactsList=new LinearLayout(this);contactsList.setOrientation(1);content.addView(contactsList);
+        TextView heading=label("Люди",18,TEXT,true);
+        content.addView(heading);
+        TextView sub=label("Находи знакомых и начинай общение.",13,MUTED,false);
+        LinearLayout.LayoutParams subp=new LinearLayout.LayoutParams(-1,-2);
+        subp.topMargin=dp(4);
+        subp.bottomMargin=dp(14);
+        content.addView(sub,subp);
+
+        LinearLayout searchBox=new LinearLayout(this);
+        searchBox.setGravity(Gravity.CENTER_VERTICAL);
+        searchBox.setPadding(dp(12),0,dp(8),0);
+        searchBox.setBackground(round(PANEL,17));
+        EditText query=field("Имя или @username");
+        query.setSingleLine(true);
+        query.setBackgroundColor(Color.TRANSPARENT);
+        query.setLayoutParams(new LinearLayout.LayoutParams(0,dp(50),1));
+        searchBox.addView(query);
+        TextView search=label("⌕",25,ACCENT,true);
+        search.setGravity(Gravity.CENTER);
+        searchBox.addView(search,new LinearLayout.LayoutParams(dp(42),dp(46)));
+        content.addView(searchBox);
+
+        LinearLayout results=new LinearLayout(this);
+        results.setOrientation(1);
+        LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-1,-2);
+        rp.topMargin=dp(8);
+        content.addView(results,rp);
+
+        TextView contactsTitle=label("Мои контакты",15,TEXT,true);
+        contactsTitle.setPadding(0,dp(18),0,dp(9));
+        content.addView(contactsTitle);
+        LinearLayout contactsList=new LinearLayout(this);
+        contactsList.setOrientation(1);
+        content.addView(contactsList);
         requestGet("/contacts",r->{
-            contactsList.removeAllViews();JSONArray contacts=r.optJSONArray("contacts");
-            if(contacts==null||contacts.length()==0){contactsList.addView(label("Пока нет контактов. Найди пользователя ниже и открой его профиль, чтобы подписаться.",13,MUTED,false));}
-            else for(int i=0;i<contacts.length();i++){
-                JSONObject u=contacts.optJSONObject(i);if(u==null)continue;
+            contactsList.removeAllViews();
+            JSONArray contacts=r.optJSONArray("contacts");
+            if(contacts==null||contacts.length()==0){
+                TextView empty=label("Контактов пока нет. Найди человека через поиск выше и открой его профиль.",13,MUTED,false);
+                empty.setPadding(dp(14),dp(16),dp(14),dp(16));
+                empty.setBackground(round(PANEL,18));
+                contactsList.addView(empty);
+            } else for(int i=0;i<contacts.length();i++){
+                JSONObject u=contacts.optJSONObject(i);
+                if(u==null)continue;
                 String username=u.optString("username"),name=u.optString("display_name");
-                LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(13),dp(10),dp(13),dp(10));card.setBackground(round(PANEL,13));
-                card.addView(label(name.isEmpty()?"@"+username:name,15,TEXT,true));
-                card.addView(label("@"+username,12,MUTED,false));
-                Button open=button("Профиль");card.addView(open);
+                String display=name.isEmpty()?"@"+username:name;
+                LinearLayout card=new LinearLayout(this);
+                card.setGravity(Gravity.CENTER_VERTICAL);
+                card.setPadding(dp(12),dp(10),dp(12),dp(10));
+                card.setBackground(round(PANEL,18));
+                TextView avatar=label(display.substring(0,1).toUpperCase(),17,0xFFEAF0FF,true);
+                avatar.setGravity(Gravity.CENTER);
+                avatar.setBackground(round(0xFF283957,50));
+                card.addView(avatar,new LinearLayout.LayoutParams(dp(44),dp(44)));
+                LinearLayout info=new LinearLayout(this);
+                info.setOrientation(1);
+                info.setPadding(dp(11),0,0,0);
+                info.addView(label(display,14,TEXT,true));
+                info.addView(label("@"+username,12,MUTED,false));
+                card.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+                TextView open=label("›",25,ACCENT,true);
+                open.setGravity(Gravity.CENTER);
+                card.addView(open,new LinearLayout.LayoutParams(dp(30),dp(42)));
                 open.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
-                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.bottomMargin=dp(7);contactsList.addView(card,lp);
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+                lp.bottomMargin=dp(7);
+                contactsList.addView(card,lp);
+                card.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
             }
         });
-        TextView discover=label("Найти людей",17,TEXT,true);discover.setPadding(0,dp(18),0,dp(8));content.addView(discover);
-        EditText query=field("Имя или username");content.addView(query);
-        Button search=button("Найти пользователей");content.addView(search);
-        LinearLayout results=new LinearLayout(this);results.setOrientation(1);content.addView(results);
-        search.setOnClickListener(v->{
-            String q=query.getText().toString().trim();if(q.length()<2){toast("Введите минимум 2 символа");return;}
-            search.setEnabled(false);
+
+        Runnable doSearch=()->{
+            String q=query.getText().toString().trim();
+            if(q.length()<2){toast("Введите минимум 2 символа");return;}
             requestGet("/users/search?q="+enc(q),r->{
-                search.setEnabled(true);results.removeAllViews();JSONArray users=r.optJSONArray("users");
-                if(users==null||users.length()==0){results.addView(label("Ничего не найдено",14,MUTED,false));return;}
+                results.removeAllViews();
+                JSONArray users=r.optJSONArray("users");
+                if(users==null||users.length()==0){
+                    TextView empty=label("Ничего не найдено",13,MUTED,false);
+                    empty.setPadding(dp(12),dp(12),dp(12),dp(12));
+                    results.addView(empty);
+                    return;
+                }
                 for(int i=0;i<users.length();i++){
-                    JSONObject u=users.optJSONObject(i);if(u==null)continue;
+                    JSONObject u=users.optJSONObject(i);
+                    if(u==null)continue;
                     String username=u.optString("username"),name=u.optString("display_name");
-                    LinearLayout card=new LinearLayout(this);card.setOrientation(1);card.setPadding(dp(13),dp(11),dp(13),dp(11));card.setBackground(round(PANEL,14));
-                    card.addView(label(name.isEmpty()?"@"+username:name,16,TEXT,true));
-                    card.addView(label("@"+username,13,MUTED,false));
-                    Button open=button("Открыть профиль");card.addView(open);
-                    open.setOnClickListener(x->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
-                    LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.bottomMargin=dp(8);results.addView(card,cp);
+                    String display=name.isEmpty()?"@"+username:name;
+                    LinearLayout card=new LinearLayout(this);
+                    card.setGravity(Gravity.CENTER_VERTICAL);
+                    card.setPadding(dp(12),dp(10),dp(12),dp(10));
+                    card.setBackground(round(PANEL_ALT,17));
+                    TextView avatar=label(display.substring(0,1).toUpperCase(),16,0xFFEAF0FF,true);
+                    avatar.setGravity(Gravity.CENTER);
+                    avatar.setBackground(round(0xFF283957,50));
+                    card.addView(avatar,new LinearLayout.LayoutParams(dp(42),dp(42)));
+                    LinearLayout info=new LinearLayout(this);
+                    info.setOrientation(1);
+                    info.setPadding(dp(10),0,0,0);
+                    info.addView(label(display,14,TEXT,true));
+                    info.addView(label("@"+username,12,MUTED,false));
+                    card.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+                    TextView open=label("Профиль  ›",12,ACCENT,true);
+                    card.addView(open);
+                    open.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
+                    LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
+                    cp.bottomMargin=dp(7);
+                    results.addView(card,cp);
+                    card.setOnClickListener(v->{Intent in=new Intent(this,ProfileActivity.class);in.putExtra("username",username);startActivity(in);});
                 }
             });
-        });
+        };
+        search.setOnClickListener(v->doSearch.run());
+        query.setOnEditorActionListener((v,action,event)->{doSearch.run();return true;});
     }
+
     private void showFeed(){
         base("Лента");
-        content.addView(label("Публикации появятся следующим этапом",17,TEXT,true));
-        content.addView(label("Сейчас готовим API публикаций, реакции и комментарии. Пока здесь нет демонстрационных или выдуманных постов.",14,MUTED,false));
+        TextView heading=label("Твоя лента",19,TEXT,true);
+        content.addView(heading);
+        LinearLayout empty=new LinearLayout(this);
+        empty.setOrientation(1);
+        empty.setGravity(Gravity.CENTER);
+        empty.setPadding(dp(22),dp(38),dp(22),dp(38));
+        empty.setBackground(round(PANEL,22));
+        TextView mark=label("✦",34,ACCENT,true);
+        mark.setGravity(Gravity.CENTER);
+        empty.addView(mark);
+        TextView title=label("Пока ничего нового",16,TEXT,true);
+        title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-1,-2);
+        tp.topMargin=dp(12);
+        empty.addView(title,tp);
+        TextView hint=label("Когда появятся публикации от людей, на которых ты подписан, они будут здесь.",13,MUTED,false);
+        hint.setGravity(Gravity.CENTER);
+        hint.setLineSpacing(dp(3),1f);
+        LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(-1,-2);
+        hp.topMargin=dp(6);
+        empty.addView(hint,hp);
+        LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-1,-2);
+        ep.topMargin=dp(16);
+        content.addView(empty,ep);
     }
+
     private void showSettings(){
         base("Настройки");
-        content.addView(label("Аккаунт",13,MUTED,true));
-        Button profile=button("Мой профиль");content.addView(profile);profile.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));
-        Button logout=button("Выйти из аккаунта");content.addView(logout);
-        logout.setOnClickListener(v->{request("/auth/logout",new JSONObject(),true,r->{});prefs.edit().clear().apply();token="";showAuth();});
+        TextView heading=label("АККАУНТ",11,MUTED,true);
+        heading.setLetterSpacing(.12f);
+        content.addView(heading);
+
+        LinearLayout profileCard=new LinearLayout(this);
+        profileCard.setGravity(Gravity.CENTER_VERTICAL);
+        profileCard.setPadding(dp(14),dp(13),dp(14),dp(13));
+        profileCard.setBackground(round(PANEL,19));
+        TextView avatar=label("●",20,ACCENT,true);
+        avatar.setGravity(Gravity.CENTER);
+        avatar.setBackground(round(0xFF263957,50));
+        profileCard.addView(avatar,new LinearLayout.LayoutParams(dp(46),dp(46)));
+        LinearLayout profileInfo=new LinearLayout(this);
+        profileInfo.setOrientation(1);
+        profileInfo.setPadding(dp(12),0,0,0);
+        profileInfo.addView(label("Мой профиль",15,TEXT,true));
+        profileInfo.addView(label("Имя, описание и аватар",12,MUTED,false));
+        profileCard.addView(profileInfo,new LinearLayout.LayoutParams(0,-2,1));
+        profileCard.addView(label("›",25,ACCENT,true));
+        content.addView(profileCard);
+        profileCard.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));
+
+        TextView security=label("БЕЗОПАСНОСТЬ",10,MUTED,true);
+        security.setLetterSpacing(.12f);
+        security.setPadding(dp(2),dp(22),0,dp(9));
+        content.addView(security);
+
+        LinearLayout sessionsCard=new LinearLayout(this);
+        sessionsCard.setOrientation(1);
+        sessionsCard.setPadding(dp(14),dp(14),dp(14),dp(14));
+        sessionsCard.setBackground(round(PANEL,18));
+        LinearLayout sessionsHeader=new LinearLayout(this);
+        sessionsHeader.setGravity(Gravity.CENTER_VERTICAL);
+        sessionsHeader.addView(label("Активные сеансы",15,TEXT,true),
+                new LinearLayout.LayoutParams(0,-2,1));
+        TextView refresh=label("Обновить",12,ACCENT,true);
+        sessionsHeader.addView(refresh);
+        sessionsCard.addView(sessionsHeader);
+        TextView sessionsHint=label("Устройства, на которых выполнен вход в твой аккаунт.",12,MUTED,false);
+        LinearLayout.LayoutParams hintParams=new LinearLayout.LayoutParams(-1,-2);
+        hintParams.topMargin=dp(5);
+        sessionsCard.addView(sessionsHint,hintParams);
+        LinearLayout sessionList=new LinearLayout(this);
+        sessionList.setOrientation(1);
+        LinearLayout.LayoutParams listParams=new LinearLayout.LayoutParams(-1,-2);
+        listParams.topMargin=dp(12);
+        sessionsCard.addView(sessionList,listParams);
+        refresh.setOnClickListener(v->loadSessions(sessionList));
+        content.addView(sessionsCard);
+
+        Button revokeOthers=button("Завершить остальные сеансы");
+        revokeOthers.setTextSize(13);
+        revokeOthers.setMinHeight(dp(48));
+        revokeOthers.setBackground(round(PANEL_ALT,30));
+        LinearLayout.LayoutParams revokeParams=new LinearLayout.LayoutParams(-1,-2);
+        revokeParams.topMargin=dp(10);
+        content.addView(revokeOthers,revokeParams);
+        revokeOthers.setOnClickListener(v->KentDialog.showMessage(this,
+                "Завершить остальные сеансы?",
+                "На всех других устройствах потребуется войти заново. Текущий сеанс останется активным.",
+                "Завершить",()->{
+                    request("/sessions/revoke-others",new JSONObject(),true,result->{
+                        int count=result.optInt("revoked",0);
+                        KentDialog.showMessage(this,"Готово",
+                                "Завершено сеансов: "+count,"Понятно",null);
+                        loadSessions(sessionList);
+                    });
+                }));
+        loadSessions(sessionList);
+
+        TextView general=label("ПРИЛОЖЕНИЕ",10,MUTED,true);
+        general.setLetterSpacing(.12f);
+        general.setPadding(dp(2),dp(22),0,dp(9));
+        content.addView(general);
+        LinearLayout logoutCard=new LinearLayout(this);
+        logoutCard.setGravity(Gravity.CENTER_VERTICAL);
+        logoutCard.setPadding(dp(14),dp(14),dp(14),dp(14));
+        logoutCard.setBackground(round(PANEL,18));
+        TextView logoutTitle=label("Выйти из аккаунта",14,0xFFFF8995,true);
+        logoutCard.addView(logoutTitle,new LinearLayout.LayoutParams(0,-2,1));
+        logoutCard.addView(label("↗",18,0xFFFF8995,true));
+        content.addView(logoutCard);
+        logoutCard.setOnClickListener(v->KentDialog.showMessage(this,"Выйти из аккаунта?","Тебе потребуется снова войти, чтобы пользоваться kentGram.","Выйти",()->{
+            request("/auth/logout",new JSONObject(),true,r->{});
+            prefs.edit().clear().apply();
+            token="";
+            stopRealtime();
+            showAuth();
+        }));
+    }
+
+    private void loadSessions(LinearLayout target){
+        target.removeAllViews();
+        TextView loading=label("Загружаем список устройств…",12,MUTED,false);
+        target.addView(loading);
+        requestGet("/sessions",result->{
+            target.removeAllViews();
+            JSONArray sessions=result.optJSONArray("sessions");
+            if(sessions==null||sessions.length()==0){
+                target.addView(label("Активных сеансов нет.",12,MUTED,false));
+                return;
+            }
+            for(int i=0;i<sessions.length();i++){
+                JSONObject item=sessions.optJSONObject(i);
+                if(item==null)continue;
+                long id=item.optLong("id",0);
+                boolean current=item.optBoolean("current",false);
+                String device=item.optString("device_name","Устройство");
+                if(device.trim().isEmpty())device="Устройство";
+                String agent=item.optString("user_agent","");
+                String ip=item.optString("ip","");
+                String details=(agent.isEmpty()?"":agent)+"  "+(ip.isEmpty()?"":"· "+ip);
+                LinearLayout row=new LinearLayout(this);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(0,dp(10),0,dp(10));
+                LinearLayout info=new LinearLayout(this);
+                info.setOrientation(1);
+                info.addView(label(device+(current?" · это устройство":""),13,
+                        current?0xFF9AB5FF:TEXT,true));
+                if(!details.trim().isEmpty()){
+                    TextView detail=label(details.trim(),10,MUTED,false);
+                    detail.setMaxLines(2);
+                    info.addView(detail);
+                }
+                row.addView(info,new LinearLayout.LayoutParams(0,-2,1));
+                if(!current&&id>0){
+                    TextView close=label("Завершить",11,0xFFFF8995,true);
+                    close.setPadding(dp(8),dp(8),0,dp(8));
+                    row.addView(close);
+                    close.setOnClickListener(v->KentDialog.showMessage(this,
+                            "Завершить сеанс?","Это устройство потеряет доступ к аккаунту.",
+                            "Завершить",()->requestDelete("/sessions/"+id,ignored->loadSessions(target))));
+                }else if(current){
+                    TextView badge=label("АКТИВЕН",9,0xFF8DD6B0,true);
+                    row.addView(badge);
+                }
+                target.addView(row);
+                if(i<sessions.length()-1){
+                    View divider=new View(this);
+                    divider.setBackgroundColor(0xFF283140);
+                    LinearLayout.LayoutParams dpv=new LinearLayout.LayoutParams(-1,dp(1));
+                    target.addView(divider,dpv);
+                }
+            }
+        });
     }
 
     private void showAuth(){
+        stopRealtime();
         base("kentGram");
         if(navBar!=null)root.removeView(navBar);
         content.setPadding(dp(20),dp(24),dp(20),dp(28));
@@ -160,7 +488,7 @@ public final class MainActivity extends Activity {
         hero.setGravity(Gravity.CENTER);
         hero.setPadding(dp(20),dp(26),dp(20),dp(24));
         hero.setBackground(round(PANEL,26));
-        TextView mark=label("k",38,0xFF76A7FF,true);
+        TextView mark=label("k",38,0xFF9AB5FF,true);
         mark.setGravity(Gravity.CENTER);
         mark.setBackground(round(0xFF203A61,28));
         LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(dp(76),dp(76));
@@ -186,133 +514,347 @@ public final class MainActivity extends Activity {
         TextView formTitle=label("Вход в аккаунт",18,TEXT,true);
         formTitle.setPadding(0,0,0,dp(14));
         form.addView(formTitle);
-        EditText email=field("Email");
-        EditText password=field("Пароль");
-        password.setInputType(129);
+
         EditText username=field("Имя пользователя");
-        username.setVisibility(View.GONE);
+        username.setSingleLine(true);
+        EditText email=field("Электронная почта");
+        email.setSingleLine(true);
+        email.setInputType( android.text.InputType.TYPE_CLASS_TEXT |
+                android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        email.setVisibility(View.GONE);
+        EditText password=field("Пароль");
+        password.setSingleLine(true);
+        password.setInputType(129);
+        form.addView(username);
         form.addView(email);
         form.addView(password);
-        form.addView(username);
 
         Button primary=button("Войти");
         Button secondary=button("Создать аккаунт");
         primary.setTextSize(16);
         primary.setMinHeight(dp(60));
-        primary.setBackground(round(0xFF2878C7,40));
+        primary.setBackground(round(ACCENT,40));
         secondary.setTextSize(14);
         secondary.setMinHeight(dp(48));
-        secondary.setBackground(round(0xFF202A38,40));
+        secondary.setBackground(round(PANEL_ALT,40));
         form.addView(primary);
-        LinearLayout.LayoutParams secondaryParams=(LinearLayout.LayoutParams)secondary.getLayoutParams();
-        if(secondaryParams==null)secondaryParams=new LinearLayout.LayoutParams(-1,-2);
+        LinearLayout.LayoutParams secondaryParams=new LinearLayout.LayoutParams(-1,-2);
         secondaryParams.topMargin=dp(4);
         secondary.setLayoutParams(secondaryParams);
         form.addView(secondary);
 
         final boolean[] registering={false};
         primary.setOnClickListener(v->{
+            String name=username.getText().toString().trim();
             String mail=email.getText().toString().trim();
             String pass=password.getText().toString();
-            if(mail.isEmpty()||pass.isEmpty()){
-                KentDialog.showMessage(this,"Заполни поля","Укажи email и пароль, чтобы продолжить.","Понятно",null);
+            if(name.isEmpty()||pass.isEmpty()||(registering[0]&&mail.isEmpty())){
+                KentDialog.showMessage(this,"Заполни поля",
+                        registering[0]?"Укажи имя пользователя, электронную почту и пароль.":
+                                "Укажи имя пользователя и пароль.",
+                        "Понятно",null);
                 return;
             }
-            if(registering[0]&&username.getText().toString().trim().isEmpty()){
-                KentDialog.showMessage(this,"Нужно имя пользователя","Придумай username для нового аккаунта.","Понятно",null);
+            if(registering[0]&&!android.util.Patterns.EMAIL_ADDRESS.matcher(mail).matches()){
+                KentDialog.showMessage(this,"Проверь почту","Введи корректный адрес электронной почты.","Понятно",null);
                 return;
             }
-            auth(mail,pass,registering[0]?username.getText().toString():null);
+            auth(name,registering[0]?mail:null,pass);
         });
         secondary.setOnClickListener(v->{
             registering[0]=!registering[0];
-            username.setVisibility(registering[0]?View.VISIBLE:View.GONE);
+            email.setVisibility(registering[0]?View.VISIBLE:View.GONE);
             formTitle.setText(registering[0]?"Создание аккаунта":"Вход в аккаунт");
             primary.setText(registering[0]?"Зарегистрироваться":"Войти");
             secondary.setText(registering[0]?"Уже есть аккаунт? Войти":"Создать аккаунт");
         });
     }
-    private void auth(String email,String password,String username){
-        JSONObject b=new JSONObject();try{b.put("email",email.trim());b.put("password",password);b.put("device_name","kentGram Android");if(username!=null)b.put("username",username.trim());}catch(Exception ignored){}
-        request(username==null?"/auth/login":"/auth/register",b,false,r->{token=r.optString("access_token","");if(token.isEmpty()){toast("Сервер не вернул токен");return;}prefs.edit().putString("access_token",token).putString("refresh_token",r.optString("refresh_token","")).apply();showChats();});
+
+    private void auth(String username,String email,String password){
+        JSONObject b=new JSONObject();
+        try{
+            b.put("username",username.trim());
+            b.put("password",password);
+            b.put("device_name","kentGram Android");
+            if(email!=null)b.put("email",email.trim());
+        }catch(Exception ignored){}
+        request(email==null?"/auth/login":"/auth/register",b,false,r->{
+            token=r.optString("access_token","");
+            if(token.isEmpty()){toast("Сервер не вернул токен");return;}
+            prefs.edit().putString("access_token",token)
+                    .putString("refresh_token",r.optString("refresh_token","")).apply();
+            showChats();
+        });
     }
     private void showChats(){
+        ensureRealtimeConnected();
+        onChatScreen=false;onNewChatScreen=false;
+        activePeerUsername="";activePeerAvatarUrl="";
         currentChat=0;
         base("kentGram");
 
-        TextView searchTitle=label("Поиск людей",16,TEXT,true);
-        content.addView(searchTitle);
-        EditText query=field("Имя или @username");
-        content.addView(query);
-        Button search=button("Найти");
-        content.addView(search);
+        TextView heading=label("Сообщения",18,TEXT,true);
+        heading.setPadding(0,dp(2),0,dp(12));
+        content.addView(heading);
+
+        LinearLayout searchRow=new LinearLayout(this);
+        searchRow.setGravity(Gravity.CENTER_VERTICAL);
+        searchRow.setPadding(dp(12),0,dp(6),0);
+        searchRow.setBackground(round(PANEL,18));
+        EditText query=field("Найти людей по имени или @username");
+        query.setBackgroundColor(Color.TRANSPARENT);
+        query.setSingleLine(true);
+        query.setLayoutParams(new LinearLayout.LayoutParams(0,dp(50),1));
+        searchRow.addView(query);
+        TextView searchIcon=label("⌕",25,ACCENT,true);
+        searchIcon.setGravity(Gravity.CENTER);
+        searchIcon.setContentDescription("Найти");
+        searchRow.addView(searchIcon,new LinearLayout.LayoutParams(dp(42),dp(46)));
+        content.addView(searchRow);
+        LinearLayout.LayoutParams srp=(LinearLayout.LayoutParams)searchRow.getLayoutParams();
+        if(srp!=null)srp.bottomMargin=dp(18);
 
         LinearLayout results=new LinearLayout(this);
         results.setOrientation(1);
         content.addView(results);
 
-        TextView caption=label("Мои переписки",16,TEXT,true);
-        caption.setPadding(0,dp(14),0,dp(9));
-        content.addView(caption);
+        LinearLayout section=new LinearLayout(this);
+        section.setGravity(Gravity.CENTER_VERTICAL);
+        TextView caption=label("Последние",15,TEXT,true);
+        section.addView(caption,new LinearLayout.LayoutParams(0,-2,1));
+        TextView joinCommunity=label("Вступить",11,MUTED,true);
+        joinCommunity.setPadding(dp(8),dp(7),dp(8),dp(7));
+        joinCommunity.setBackground(round(PANEL_ALT,12));
+        joinCommunity.setOnClickListener(v->showJoinCommunityDialog());
+        section.addView(joinCommunity);
+        TextView createCommunity=label("+ Создать",11,ACCENT,true);
+        createCommunity.setPadding(dp(8),dp(7),dp(8),dp(7));
+        createCommunity.setBackground(round(PANEL_ALT,12));
+        createCommunity.setOnClickListener(v->showCommunityCreateDialog());
+        LinearLayout.LayoutParams createParams=new LinearLayout.LayoutParams(-2,-2);
+        createParams.leftMargin=dp(7);
+        section.addView(createCommunity,createParams);
+        content.addView(section);
         LinearLayout chatsList=new LinearLayout(this);
         chatsList.setOrientation(1);
-        content.addView(chatsList);
+        LinearLayout.LayoutParams clp=new LinearLayout.LayoutParams(-1,-2);
+        clp.topMargin=dp(10);
+        content.addView(chatsList,clp);
+        activeChatsList=chatsList;
         loadChats(chatsList);
 
-        search.setOnClickListener(v->searchUsers(query,search,results));
+        searchRow.setOnClickListener(v->{query.requestFocus();});
+        searchIcon.setOnClickListener(v->searchUsers(query,searchIcon,results));
         query.setOnEditorActionListener((v,action,event)->{
-            searchUsers(query,search,results);
+            searchUsers(query,new Button(this),results);
             return true;
         });
 
-        // Floating action button sits above the bottom navigation.
         LinearLayout fabBar=new LinearLayout(this);
         fabBar.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
         fabBar.setPadding(dp(16),dp(2),dp(18),dp(10));
-        TextView fab=label("+",30,Color.WHITE,true);
+        TextView fab=label("+",29,Color.WHITE,false);
         fab.setGravity(Gravity.CENTER);
-        fab.setBackground(round(0xFF2878C7,50));
-        fab.setElevation(dp(7));
+        fab.setBackground(round(ACCENT,50));
+        fab.setElevation(dp(9));
         fab.setContentDescription("Новая переписка");
         fab.setOnClickListener(v->showUserSearch());
+        fab.setOnTouchListener((v,event)->{
+            if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)
+                v.animate().scaleX(.92f).scaleY(.92f).setDuration(75).start();
+            else if(event.getAction()==android.view.MotionEvent.ACTION_UP ||
+                    event.getAction()==android.view.MotionEvent.ACTION_CANCEL)
+                v.animate().scaleX(1f).scaleY(1f).setDuration(110).start();
+            return false;
+        });
         fabBar.addView(fab,new LinearLayout.LayoutParams(dp(58),dp(58)));
         int navIndex=root.indexOfChild(navBar);
         root.addView(fabBar,navIndex<0?root.getChildCount():navIndex,
                 new LinearLayout.LayoutParams(-1,-2));
     }
 
+    private void showCommunityCreateDialog(){
+        LinearLayout form=new LinearLayout(this);
+        form.setOrientation(1);
+        form.setPadding(dp(18),dp(8),dp(18),0);
+        EditText titleInput=field("Название");
+        titleInput.setSingleLine(true);
+        form.addView(titleInput,new LinearLayout.LayoutParams(-1,dp(52)));
+        RadioGroup typeGroup=new RadioGroup(this);
+        typeGroup.setOrientation(RadioGroup.HORIZONTAL);
+        RadioButton groupOption=new RadioButton(this);
+        groupOption.setText("Группа");
+        groupOption.setTextColor(TEXT);
+        groupOption.setId(View.generateViewId());
+        RadioButton channelOption=new RadioButton(this);
+        channelOption.setText("Канал");
+        channelOption.setTextColor(TEXT);
+        channelOption.setId(View.generateViewId());
+        typeGroup.addView(groupOption);
+        typeGroup.addView(channelOption);
+        groupOption.setChecked(true);
+        form.addView(typeGroup);
+        EditText descriptionInput=field("Описание (необязательно)");
+        descriptionInput.setSingleLine(false);
+        descriptionInput.setMinLines(2);
+        form.addView(descriptionInput,new LinearLayout.LayoutParams(-1,dp(76)));
+        CheckBox publicToggle=new CheckBox(this);
+        publicToggle.setText("Публичное сообщество");
+        publicToggle.setTextColor(TEXT);
+        form.addView(publicToggle);
+        EditText usernameInput=field("Публичный @username");
+        usernameInput.setSingleLine(true);
+        usernameInput.setVisibility(View.GONE);
+        form.addView(usernameInput,new LinearLayout.LayoutParams(-1,dp(50)));
+        publicToggle.setOnCheckedChangeListener((button,checked)->usernameInput.setVisibility(checked?View.VISIBLE:View.GONE));
+        AlertDialog dialog=new AlertDialog.Builder(this)
+                .setTitle("Новое сообщество")
+                .setView(form)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Создать",null)
+                .create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{
+            String title=titleInput.getText().toString().trim();
+            if(title.isEmpty()||title.length()>80){toast("Название: от 1 до 80 символов");return;}
+            JSONObject body=new JSONObject();
+            try{
+                body.put("kind",channelOption.isChecked()?"channel":"group");
+                body.put("title",title);
+                body.put("description",descriptionInput.getText().toString().trim());
+                body.put("is_public",publicToggle.isChecked());
+                if(publicToggle.isChecked())body.put("username",usernameInput.getText().toString().trim().replace("@",""));
+            }catch(JSONException ignored){}
+            request("/chats/community",body,true,result->{
+                dialog.dismiss();
+                cachedChats=null;
+                showChats();
+                toast(channelOption.isChecked()?"Канал создан":"Группа создана");
+            });
+        }));
+        dialog.show();
+    }
+
+    private void showJoinCommunityDialog(){
+        EditText username=field("@username сообщества");
+        username.setSingleLine(true);
+        new AlertDialog.Builder(this)
+                .setTitle("Вступить в группу или канал")
+                .setView(username)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Вступить",(dialog,which)->{
+                    String handle=username.getText().toString().trim().replace("@","");
+                    if(handle.isEmpty()){toast("Укажите username");return;}
+                    JSONObject body=new JSONObject();
+                    try{body.put("username",handle);}catch(JSONException ignored){}
+                    request("/chats/join",body,true,result->{
+                        cachedChats=null;
+                        showChats();
+                        toast("Вы вступили в сообщество");
+                    });
+                }).show();
+    }
+
     private void loadChats(LinearLayout chatsList){
+        if(cachedChats!=null){
+            renderChats(chatsList,cachedChats);
+        }else{
+            TextView loading=label("Загружаем переписки…",13,MUTED,false);
+            loading.setGravity(Gravity.CENTER);
+            loading.setPadding(0,dp(22),0,dp(22));
+            chatsList.addView(loading);
+        }
         requestGet("/chats",r->{
-            chatsList.removeAllViews();
-            JSONArray a=r.optJSONArray("chats");
-            if(a==null||a.length()==0){
-                chatsList.addView(label("Пока нет переписок. Начни новую через кнопку +.",14,MUTED,false));
-                return;
-            }
-            for(int i=0;i<a.length();i++){
-                JSONObject c=a.optJSONObject(i);
-                if(c==null)continue;
-                long id=c.optLong("id");
-                String name=c.optString("peer_display_name");
-                if(name.isEmpty())name="@"+c.optString("peer_username");
-                String last=c.optString("last_message","Начните общение");
-                final long chatId=id;
-                final String peerName=name;
-                LinearLayout card=new LinearLayout(this);
-                card.setOrientation(1);
-                card.setPadding(dp(14),dp(12),dp(14),dp(12));
-                card.setBackground(round(PANEL,16));
-                card.addView(label(peerName,16,TEXT,true));
-                card.addView(label(last.isEmpty()?"Нет сообщений":last,14,MUTED,false));
-                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-                lp.bottomMargin=dp(8);
-                chatsList.addView(card,lp);
-                card.setOnClickListener(v->openChat(chatId,peerName));
+            JSONArray fresh=r.optJSONArray("chats");
+            if(fresh!=null){
+                cachedChats=fresh;
+                renderChats(chatsList,fresh);
             }
         });
     }
 
-    private void searchUsers(EditText query,Button search,LinearLayout results){
+    private void renderChats(LinearLayout chatsList,JSONArray chats){
+        chatsList.removeAllViews();
+        if(chats==null||chats.length()==0){
+            LinearLayout empty=new LinearLayout(this);
+            empty.setOrientation(1);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(22),dp(34),dp(22),dp(34));
+            empty.setBackground(round(PANEL,22));
+            TextView symbol=label("✦",30,ACCENT,true);
+            symbol.setGravity(Gravity.CENTER);
+            empty.addView(symbol);
+            TextView title=label("Здесь пока тихо",16,TEXT,true);
+            title.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams etp=new LinearLayout.LayoutParams(-1,-2);
+            etp.topMargin=dp(10);
+            empty.addView(title,etp);
+            TextView hint=label("Начни новую переписку — она появится здесь.",13,MUTED,false);
+            hint.setGravity(Gravity.CENTER);
+            LinearLayout.LayoutParams ehp=new LinearLayout.LayoutParams(-1,-2);
+            ehp.topMargin=dp(5);
+            empty.addView(hint,ehp);
+            chatsList.addView(empty);
+            return;
+        }
+        for(int i=0;i<chats.length();i++){
+            JSONObject c=chats.optJSONObject(i);
+            if(c==null)continue;
+            long id=c.optLong("id");
+            String kind=c.optString("kind","direct");
+            boolean community="group".equals(kind)||"channel".equals(kind);
+            String name=community?c.optString("title",""):c.optString("peer_display_name");
+            if(name.isEmpty())name=community?"Сообщество":"@"+c.optString("peer_username");
+            String last=c.optString("last_message","Начните общение");
+            String peerUsername=c.optString("peer_username","");
+            String peerAvatarUrl=c.optString("peer_avatar_url","");
+            final long chatId=id;
+            final long peerId=c.optLong("peer_id",0);
+            final String peerName=name;
+            final String peerHandle=peerUsername;
+            final String peerAvatar=peerAvatarUrl;
+            final String chatKind=kind;
+
+            LinearLayout card=new LinearLayout(this);
+            card.setGravity(Gravity.CENTER_VERTICAL);
+            card.setOrientation(LinearLayout.HORIZONTAL);
+            card.setPadding(dp(12),dp(12),dp(12),dp(12));
+            card.setBackground(round(PANEL,19));
+            TextView avatar=label(name.isEmpty()?"K":name.substring(0,1).toUpperCase(),18,0xFFEAF0FF,true);
+            avatar.setGravity(Gravity.CENTER);
+            avatar.setBackground(round(0xFF283957,50));
+            card.addView(avatar,new LinearLayout.LayoutParams(dp(50),dp(50)));
+
+            LinearLayout details=new LinearLayout(this);
+            details.setOrientation(1);
+            details.setPadding(dp(12),0,0,0);
+            details.addView(label(peerName,15,TEXT,true));
+            TextView preview=label(last.isEmpty()?"Нет сообщений":last,13,MUTED,false);
+            preview.setMaxLines(1);
+            preview.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams dlp=new LinearLayout.LayoutParams(0,-2,1);
+            dlp.gravity=Gravity.CENTER_VERTICAL;
+            card.addView(details,dlp);
+            details.addView(preview);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+            lp.bottomMargin=dp(8);
+            chatsList.addView(card,lp);
+            card.setAlpha(0f);
+            card.setTranslationY(dp(7));
+            card.animate().alpha(1f).translationY(0f).setStartDelay(Math.min(i*32L,256L))
+                    .setDuration(190).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+            card.setOnClickListener(v->openChat(chatId,peerName,peerHandle,peerAvatar,chatKind,peerId));
+            card.setOnTouchListener((v,event)->{
+                if(event.getAction()==android.view.MotionEvent.ACTION_DOWN)
+                    v.animate().scaleX(.985f).scaleY(.985f).setDuration(70).start();
+                else if(event.getAction()==android.view.MotionEvent.ACTION_UP ||
+                        event.getAction()==android.view.MotionEvent.ACTION_CANCEL)
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(100).start();
+                return false;
+            });
+        }
+    }
+
+    private void searchUsers(EditText query,View search,LinearLayout results){
         String value=query.getText().toString().trim();
         if(value.startsWith("@"))value=value.substring(1).trim();
         if(value.length()<2){
@@ -320,9 +862,7 @@ public final class MainActivity extends Activity {
             return;
         }
         final String searchValue=value;
-        search.setEnabled(false);
         requestGet("/users/search?q="+enc(searchValue),r->{
-            search.setEnabled(true);
             results.removeAllViews();
             JSONArray users=r.optJSONArray("users");
             if(users==null||users.length()==0){
@@ -349,7 +889,7 @@ public final class MainActivity extends Activity {
                     try{body.put("user_id",uid);}catch(Exception ignored){}
                     request("/chats/direct",body,true,created->{
                         String peer=displayName.isEmpty()?"@"+username:displayName;
-                        openChat(created.optLong("chat_id"),peer);
+                        openChat(created.optLong("chat_id"),peer,username,u.optString("avatar_url",""),"direct",uid);
                     });
                 });
                 LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
@@ -360,7 +900,18 @@ public final class MainActivity extends Activity {
     }
 
     private void showUserSearch(){
+        onChatScreen=false;onNewChatScreen=true;
         base("Новая переписка");
+        if(navBar!=null)root.removeView(navBar);
+        top.removeAllViews();
+        TextView back=label("‹",32,ACCENT,false);
+        back.setGravity(Gravity.CENTER);
+        top.addView(back,new LinearLayout.LayoutParams(dp(42),dp(46)));
+        back.setOnClickListener(v->showChats());
+        TextView title=label("Новая переписка",19,TEXT,true);
+        LinearLayout.LayoutParams titleParams=new LinearLayout.LayoutParams(0,-2,1);
+        titleParams.leftMargin=dp(10);
+        top.addView(title,titleParams);
         EditText q=field("Имя или @username");
         content.addView(q);
         Button search=button("Найти");
@@ -374,57 +925,791 @@ public final class MainActivity extends Activity {
             return true;
         });
     }
-    private void openChat(long id,String peer){
-        currentChat=id;base(peer);
-        // Replace the generic list container with the dedicated message history.
-        root.removeViewAt(1);if(navBar!=null)root.removeView(navBar);
-        Button back=button("‹ Чаты");back.setTextSize(13);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-2,-2);top.addView(back,bp);back.setOnClickListener(v->showChats());
-        ScrollView history=new ScrollView(this);LinearLayout messages=new LinearLayout(this);messages.setOrientation(1);messages.setPadding(dp(10),dp(8),dp(10),dp(8));history.addView(messages);root.addView(history,new LinearLayout.LayoutParams(-1,0,1));
-        LinearLayout composerBox=new LinearLayout(this);composerBox.setOrientation(1);composerBox.setPadding(dp(8),dp(5),dp(8),dp(5));composerBox.setBackgroundColor(PANEL);
-        replyPreview=new LinearLayout(this);replyPreview.setOrientation(1);replyPreview.setPadding(dp(10),dp(7),dp(10),dp(7));replyPreview.setBackground(round(0xFF202A38,12));replyPreview.setVisibility(View.GONE);replyPreview.addView(label("Ответ на сообщение",12,0xFF76A7FF,true));TextView previewText=label("",13,TEXT,false);replyPreview.addView(previewText);replyPreview.setOnClickListener(v->clearReply());composerBox.addView(replyPreview,new LinearLayout.LayoutParams(-1,-2));
-        LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);composer=field("Сообщение");composer.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));bar.addView(composer);Button send=button("➤");send.setTextSize(16);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(58),dp(48));bar.addView(send,sp);composerBox.addView(bar);root.addView(composerBox);
-        send.setOnClickListener(v->sendMessage(id,messages,history));composer.setOnEditorActionListener((v,a,e)->{sendMessage(id,messages,history);return true;});refreshMessages(id,messages,history);
+    private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl){
+        openChat(id,peer,peerUsername,peerAvatarUrl,"direct");
     }
+    private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl,String chatKind){
+        openChat(id,peer,peerUsername,peerAvatarUrl,chatKind,0);
+    }
+    private void openChat(long id,String peer,String peerUsername,String peerAvatarUrl,String chatKind,long peerID){
+        getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+        onChatScreen=true;onNewChatScreen=false;
+        activePeerID="direct".equals(chatKind)?peerID:0;
+        activePeerUsername="direct".equals(chatKind)&&peerUsername!=null?peerUsername:"";
+        activePeerAvatarUrl="direct".equals(chatKind)&&peerAvatarUrl!=null?peerAvatarUrl:"";
+        currentChat=id;
+        base(peer);
+        root.removeViewAt(1);
+        if(navBar!=null)root.removeView(navBar);
+        top.removeAllViews();
+
+        TextView back=label("‹",34,ACCENT,false);
+        back.setGravity(Gravity.CENTER);
+        top.addView(back,new LinearLayout.LayoutParams(dp(42),dp(46)));
+        back.setOnClickListener(v->showChats());
+
+        ImageView peerAvatar=new ImageView(this);
+        peerAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        peerAvatar.setImageDrawable(getDrawable(android.R.drawable.sym_def_app_icon));
+        peerAvatar.setBackground(round(0xFF283957,50));
+        peerAvatar.setClipToOutline(true);
+        top.addView(peerAvatar,new LinearLayout.LayoutParams(dp(42),dp(42)));
+        loadChatAvatar(peerAvatar,activePeerAvatarUrl);
+
+        LinearLayout peerBlock=new LinearLayout(this);
+        peerBlock.setOrientation(1);
+        peerBlock.setPadding(dp(10),0,0,0);
+        TextView peerTitle=label(peer,16,TEXT,true);
+        peerBlock.addView(peerTitle);
+        String chatSubtitle="direct".equals(chatKind)?
+                (activePeerUsername.isEmpty()?"переписка":"@"+activePeerUsername):
+                ("channel".equals(chatKind)?"канал":"группа");
+        activeChatSubtitle=chatSubtitle;
+        activeChatStatus=label(chatSubtitle,11,MUTED,false);
+        peerBlock.addView(activeChatStatus);
+        top.addView(peerBlock,new LinearLayout.LayoutParams(0,-2,1));
+        View.OnClickListener openPeer=v->{
+            if(!activePeerUsername.isEmpty()){
+                Intent profile=new Intent(this,ProfileActivity.class);
+                profile.putExtra("username",activePeerUsername);
+                startActivity(profile);
+            }else if(!"direct".equals(chatKind)){
+                showCommunityDetails(id,chatKind);
+            }
+        };
+        peerBlock.setOnClickListener(openPeer);
+        peerAvatar.setOnClickListener(openPeer);
+
+        activePinnedBanner=label("",12,0xFFBFD0EE,true);
+        activePinnedBanner.setPadding(dp(13),dp(10),dp(13),dp(10));
+        activePinnedBanner.setBackground(round(0xFF182438,12));
+        activePinnedBanner.setVisibility(View.GONE);
+        activePinnedBanner.setOnClickListener(v->{
+            Object tag=activePinnedBanner.getTag();
+            if(tag instanceof Long)scrollToMessage(activeMessages,activeHistory,(Long)tag);
+        });
+        root.addView(activePinnedBanner,1,new LinearLayout.LayoutParams(-1,-2));
+
+        ScrollView history=new ScrollView(this);
+        history.setClipToPadding(false);
+        LinearLayout messages=new LinearLayout(this);
+        messages.setOrientation(1);
+        messages.setPadding(dp(12),dp(8),dp(12),dp(14));
+        history.addView(messages);
+        root.addView(history,new LinearLayout.LayoutParams(-1,0,1));
+        activeMessages=messages;
+        activeHistory=history;
+
+        LinearLayout composerBox=new LinearLayout(this);
+        composerBox.setOrientation(1);
+        composerBox.setPadding(dp(12),dp(8),dp(12),dp(10));
+        composerBox.setBackgroundColor(BG);
+
+        replyPreview=new LinearLayout(this);
+        replyPreview.setOrientation(1);
+        replyPreview.setPadding(dp(12),dp(9),dp(12),dp(9));
+        replyPreview.setBackground(round(PANEL_ALT,14));
+        replyPreview.setVisibility(View.GONE);
+        replyPreview.addView(label("ОТВЕТ НА СООБЩЕНИЕ",10,ACCENT,true));
+        replyPreview.addView(label("",13,TEXT,false));
+        replyPreview.setOnClickListener(v->clearReply());
+        LinearLayout.LayoutParams rpp=new LinearLayout.LayoutParams(-1,-2);
+        rpp.bottomMargin=dp(8);
+        composerBox.addView(replyPreview,rpp);
+
+        LinearLayout bar=new LinearLayout(this);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(6),dp(3),dp(6),dp(3));
+        bar.setBackground(round(PANEL,28));
+        composer=field("Сообщение");
+        composer.setBackgroundColor(Color.TRANSPARENT);
+        composer.setMinHeight(dp(46));
+        composer.setPadding(dp(12),dp(7),dp(8),dp(7));
+        composer.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));
+        bar.addView(composer);
+        TextView attach=label("＋",22,ACCENT,true);
+        attach.setGravity(Gravity.CENTER);
+        bar.addView(attach,new LinearLayout.LayoutParams(dp(40),dp(44)));
+        attach.setOnClickListener(v->{
+            pendingMediaChatId=id;
+            pendingMediaCaption=composer.getText().toString().trim();
+            pendingMediaMessages=messages;
+            pendingMediaHistory=history;
+            Intent picker=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            picker.addCategory(Intent.CATEGORY_OPENABLE);
+            picker.setType("*/*");
+            picker.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/jpeg","image/png","application/pdf"});
+            startActivityForResult(picker,REQUEST_PICK_CHAT_MEDIA);
+        });
+        TextView pollAction=label("☷",21,ACCENT,true);
+        pollAction.setGravity(Gravity.CENTER);
+        bar.addView(pollAction,new LinearLayout.LayoutParams(dp(38),dp(44)));
+        pollAction.setOnClickListener(v->showCreatePollDialog(id,messages,history));
+        TextView send=label("➤",19,Color.WHITE,true);
+        send.setGravity(Gravity.CENTER);
+        send.setBackground(round(ACCENT,50));
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(44),dp(44));
+        bar.addView(send,sp);
+        composerBox.addView(bar);
+        composerBox.setVisibility(View.VISIBLE);
+        composerBox.setFocusable(false);
+        root.addView(composerBox,new LinearLayout.LayoutParams(-1,-2));
+        composerBox.bringToFront();
+
+        send.setOnClickListener(v->sendMessage(id,messages,history));
+        composer.setOnEditorActionListener((v,a,e)->{
+            sendMessage(id,messages,history);
+            return true;
+        });
+        composer.addTextChangedListener(new android.text.TextWatcher(){
+            @Override public void beforeTextChanged(CharSequence value,int start,int count,int after){}
+            @Override public void onTextChanged(CharSequence value,int start,int before,int count){
+                if(value.length()>0){
+                    long now=System.currentTimeMillis();
+                    if(now-lastTypingSentAt>1500){
+                        lastTypingSentAt=now;
+                        sendRealtimeTyping(id);
+                    }
+                }
+            }
+            @Override public void afterTextChanged(android.text.Editable value){}
+        });
+        refreshMessages(id,messages,history);
+        sendRealtimePresenceSubscribe(id);
+        if(!"direct".equals(chatKind)){
+            requestGet("/chats/"+id,details->{
+                String role=details.optString("role","member");
+                boolean canPost=!"channel".equals(chatKind)||"owner".equals(role)||"admin".equals(role);
+                composer.setEnabled(canPost);
+                send.setEnabled(canPost);
+                pollAction.setEnabled(canPost);
+                pollAction.setAlpha(canPost?1f:.35f);
+                attach.setEnabled(canPost);
+                attach.setAlpha(canPost?1f:.35f);
+                composer.setHint(canPost?"Сообщение":"Публиковать могут только администраторы");
+                send.setAlpha(canPost?1f:.35f);
+            });
+        }
+    }
+
+    private void showCommunityDetails(long chatId,String chatKind){
+        requestGet("/chats/"+chatId,details->{
+            String title=details.optString("title","Сообщество");
+            String description=details.optString("description","");
+            String role=details.optString("role","member");
+            long count=details.optLong("member_count",0);
+            LinearLayout panel=new LinearLayout(this);
+            panel.setOrientation(1);
+            panel.setPadding(dp(18),dp(8),dp(18),dp(4));
+            TextView summary=label((description.isEmpty()?"":description+"\n")+"Участников: "+count+"\nВаша роль: "+role,13,MUTED,false);
+            panel.addView(summary);
+            Button members=new Button(this);
+            members.setText("Участники");
+            panel.addView(members);
+            members.setOnClickListener(v->loadCommunityMembers(chatId));
+            if("owner".equals(role)||"admin".equals(role)){
+                Button invite=new Button(this);
+                invite.setText("Пригласить пользователя");
+                panel.addView(invite);
+                invite.setOnClickListener(v->showInviteCommunityMember(chatId));
+            }
+            if("owner".equals(role)){
+                Button transfer=new Button(this);
+                transfer.setText("Передать владельца");
+                panel.addView(transfer);
+                transfer.setOnClickListener(v->showTransferCommunityOwnership(chatId));
+            }
+            Button leave=new Button(this);
+            leave.setText("Покинуть сообщество");
+            panel.addView(leave);
+            leave.setOnClickListener(v->{
+                request("/chats/"+chatId+"/leave",new JSONObject(),true,result->{
+                    cachedChats=null;
+                    showChats();
+                    toast("Вы покинули сообщество");
+                },(error,status)->toast(status==409?"Сначала передайте права владельца":"Не удалось выйти"));
+            });
+            new AlertDialog.Builder(this).setTitle(title).setView(panel).setPositiveButton("Закрыть",null).show();
+        });
+    }
+
+    private void loadCommunityMembers(long chatId){
+        requestGet("/chats/"+chatId,details->{
+            String viewerRole=details.optString("role","member");
+            boolean canManage="owner".equals(viewerRole)||"admin".equals(viewerRole);
+            boolean isOwner="owner".equals(viewerRole);
+            requestGet("/chats/"+chatId+"/members",result->{
+                JSONArray members=result.optJSONArray("members");
+                if(members==null||members.length()==0){toast("Участников пока нет");return;}
+                String[] labels=new String[members.length()];
+                for(int i=0;i<members.length();i++){
+                    JSONObject member=members.optJSONObject(i);
+                    if(member==null){labels[i]="Участник";continue;}
+                    String display=member.optString("display_name","");
+                    String username=member.optString("username","");
+                    String name=display.isEmpty()?"@"+username:display+" (@"+username+")";
+                    labels[i]=name+" · "+member.optString("role","member");
+                }
+                new AlertDialog.Builder(this).setTitle("Участники").setItems(labels,(list,index)->{
+                    if(!canManage)return;
+                    JSONObject target=members.optJSONObject(index);
+                    if(target==null)return;
+                    String targetRole=target.optString("role","member");
+                    if("owner".equals(targetRole))return;
+                    long targetID=target.optLong("user_id");
+                    if(targetID<=0)return;
+                    String[] actions;
+                    if(isOwner&&"admin".equals(targetRole))
+                        actions=new String[]{"Снять администратора","Удалить администратора"};
+                    else if(isOwner)
+                        actions=new String[]{"Назначить администратором","Удалить участника"};
+                    else if("member".equals(targetRole))
+                        actions=new String[]{"Удалить участника"};
+                    else return;
+                    new AlertDialog.Builder(this).setTitle(labels[index]).setItems(actions,(actionDialog,action)->{
+                        if(isOwner&&action==0){
+                            JSONObject body=new JSONObject();
+                            try{body.put("role","admin".equals(targetRole)?"member":"admin");}catch(JSONException ignored){}
+                            request("/chats/"+chatId+"/members/"+targetID+"/role",body,true,updated->{
+                                toast("Роль обновлена");
+                                loadCommunityMembers(chatId);
+                            });
+                        }else{
+                            requestDelete("/chats/"+chatId+"/members/"+targetID,removed->{
+                                toast("Участник удалён");
+                                loadCommunityMembers(chatId);
+                            });
+                        }
+                    }).setNegativeButton("Отмена",null).show();
+                }).setPositiveButton("Закрыть",null).show();
+            });
+        });
+    }
+
+    private void showInviteCommunityMember(long chatId){
+        EditText username=field("@username пользователя");
+        username.setSingleLine(true);
+        new AlertDialog.Builder(this).setTitle("Пригласить участника").setView(username)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Найти",(dialog,which)->{
+                    String handle=username.getText().toString().trim().replace("@","");
+                    if(handle.length()<2){toast("Введите username");return;}
+                    requestGet("/users/search?q="+enc(handle),result->{
+                        JSONArray users=result.optJSONArray("users");
+                        JSONObject found=null;
+                        if(users!=null)for(int i=0;i<users.length();i++){
+                            JSONObject candidate=users.optJSONObject(i);
+                            if(candidate!=null&&handle.equalsIgnoreCase(candidate.optString("username"))){found=candidate;break;}
+                        }
+                        if(found==null){toast("Пользователь не найден");return;}
+                        JSONObject body=new JSONObject();
+                        try{body.put("user_id",found.optLong("id"));}catch(JSONException ignored){}
+                        request("/chats/"+chatId+"/members",body,true,added->{
+                            toast("Участник добавлен");
+                            showCommunityDetails(chatId,"group");
+                        });
+                    });
+                }).show();
+    }
+
+    private void showTransferCommunityOwnership(long chatId){
+        EditText username=field("@username нового владельца");
+        username.setSingleLine(true);
+        new AlertDialog.Builder(this).setTitle("Передать владение").setView(username)
+                .setNegativeButton("Отмена",null)
+                .setPositiveButton("Передать",(dialog,which)->{
+                    String handle=username.getText().toString().trim().replace("@","");
+                    requestGet("/users/search?q="+enc(handle),result->{
+                        JSONArray users=result.optJSONArray("users");
+                        JSONObject found=null;
+                        if(users!=null)for(int i=0;i<users.length();i++){
+                            JSONObject candidate=users.optJSONObject(i);
+                            if(candidate!=null&&handle.equalsIgnoreCase(candidate.optString("username"))){found=candidate;break;}
+                        }
+                        if(found==null){toast("Пользователь не найден");return;}
+                        JSONObject body=new JSONObject();
+                        try{body.put("user_id",found.optLong("id"));}catch(JSONException ignored){}
+                        request("/chats/"+chatId+"/transfer-ownership",body,true,result2->{
+                            toast("Владелец изменён");
+                            showCommunityDetails(chatId,"group");
+                        });
+                    });
+                }).show();
+    }
+
     private void refreshMessages(long id,LinearLayout messages,ScrollView history){
         requestGet("/chats/"+id+"/messages",r->{
             if(currentChat!=id)return;
-            messages.removeAllViews();
             JSONArray a=r.optJSONArray("messages");
+            requestGet("/chats/"+id+"/read",readState->{
+                if(currentChat!=id)return;
+                JSONObject cursors=readState.optJSONObject("read_cursors");
+                long peerRead=activePeerID>0&&cursors!=null?cursors.optLong(String.valueOf(activePeerID),0):0;
+                activePeerReadCursor=peerRead;
+                messages.removeAllViews();
+                long latestMessageId=0;
             if(a!=null)for(int i=0;i<a.length();i++){
                 JSONObject m=a.optJSONObject(i);
                 if(m==null)continue;
                 boolean mine=m.optBoolean("is_mine");
                 long messageId=m.optLong("id",0);
+                latestMessageId=Math.max(latestMessageId,messageId);
                 String body=m.optString("body","");
-                LinearLayout row=new LinearLayout(this);row.setTag(Long.valueOf(messageId));row.setOrientation(1);
+                String mediaUrl=m.optString("media_url","");
+                String mediaMime=m.optString("media_mime","");
+                String mediaName=m.optString("media_name","");
+                LinearLayout row=new LinearLayout(this);
+                row.setTag(Long.valueOf(messageId));
+                row.setOrientation(1);
                 row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
-                long replyId=m.optLong("reply_to_message_id",0);String quoted=m.optString("reply_to_body","");String quotedSender=m.optString("reply_to_sender_username","");
-                if(replyId>0){TextView quote=label((quotedSender.isEmpty()?"Ответ на сообщение":"Ответ на @"+quotedSender)+"\\n"+(quoted.isEmpty()?"Сообщение недоступно":quoted),12,MUTED,false);quote.setPadding(dp(9),dp(6),dp(9),dp(6));quote.setBackground(round(0xFF111925,10));LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(-2,-2);qp.setMargins(dp(2),dp(4),dp(2),0);row.addView(quote,qp);quote.setOnClickListener(v->scrollToMessage(messages,history,replyId));}
-                TextView bubble=label(body,15,TEXT,false);
-                bubble.setPadding(dp(13),dp(9),dp(13),dp(9));
-                bubble.setBackground(round(mine?0xFF17466A:0xFF202A38,16));
+
+                if(!mediaUrl.isEmpty()&&mediaMime.startsWith("image/")){
+                    ImageView attachment=new ImageView(this);
+                    attachment.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    attachment.setBackground(round(0xFF202A39,14));
+                    attachment.setClipToOutline(true);
+                    LinearLayout.LayoutParams attachmentParams=new LinearLayout.LayoutParams(dp(236),dp(176));
+                    attachmentParams.setMargins(dp(2),dp(5),dp(2),dp(4));
+                    row.addView(attachment,attachmentParams);
+                    loadChatMedia(attachment,API+mediaUrl);
+                    attachment.setOnClickListener(v->showChatImage(API+mediaUrl));
+                }else if(!mediaUrl.isEmpty()){
+                    TextView attachment=label("📄  "+(mediaName.isEmpty()?body:mediaName)+"\nФайл · "+formatBytes(m.optLong("media_size",0)),13,TEXT,true);
+                    attachment.setPadding(dp(13),dp(12),dp(13),dp(12));
+                    attachment.setBackground(round(PANEL_ALT,13));
+                    row.addView(attachment,new LinearLayout.LayoutParams(-1,-2));
+                }
+
+                long forwardedMessageId=m.optLong("forwarded_from_message_id",0);
+                if(forwardedMessageId>0){
+                    String from=m.optString("forwarded_from_username","");
+                    TextView forwarded=label("Переслано от "+(from.isEmpty()?"пользователя":"@"+from),11,0xFF9AB5FF,true);
+                    forwarded.setPadding(dp(5),dp(4),dp(5),dp(1));
+                    row.addView(forwarded);
+                }
+
+                long replyId=m.optLong("reply_to_message_id",0);
+                String quoted=m.optString("reply_to_body","");
+                String quotedSender=m.optString("reply_to_sender_username","");
+                if(replyId>0){
+                    TextView quote=label((quotedSender.isEmpty()?"Ответ на сообщение":"Ответ на @"+quotedSender)+"\n"+
+                            (quoted.isEmpty()?"Сообщение недоступно":quoted),11,0xFFB8C7DD,false);
+                    quote.setPadding(dp(11),dp(8),dp(11),dp(8));
+                    quote.setBackground(round(0xFF202A39,12));
+                    LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(-2,-2);
+                    qp.setMargins(dp(2),dp(5),dp(2),0);
+                    row.addView(quote,qp);
+                    quote.setOnClickListener(v->scrollToMessage(messages,history,replyId));
+                }
+
+                TextView bubble=label(body,15,mine?Color.WHITE:TEXT,false);
+                bubble.setLineSpacing(dp(2),1.02f);
+                bubble.setMaxWidth((int)(getResources().getDisplayMetrics().widthPixels*.78f));
+                bubble.setPadding(dp(14),dp(10),dp(14),dp(10));
+                bubble.setBackground(round(mine?0xFF315DA8:0xFF1B222D,mine?18:18));
                 LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);
                 p.setMargins(dp(2),dp(4),dp(2),dp(4));
-                row.addView(bubble,p);
+                LinearLayout messageLine=new LinearLayout(this);
+                messageLine.setGravity(Gravity.CENTER_VERTICAL|(mine?Gravity.RIGHT:Gravity.LEFT));
+                if(!mine){
+                    ImageView senderAvatar=new ImageView(this);
+                    senderAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    senderAvatar.setImageDrawable(getDrawable(android.R.drawable.sym_def_app_icon));
+                    senderAvatar.setBackground(round(0xFF283957,50));
+                    senderAvatar.setClipToOutline(true);
+                    LinearLayout.LayoutParams avatarParams=new LinearLayout.LayoutParams(dp(29),dp(29));
+                    avatarParams.setMargins(0,0,dp(7),0);
+                    messageLine.addView(senderAvatar,avatarParams);
+                    loadChatAvatar(senderAvatar,activePeerAvatarUrl);
+                }
+                messageLine.addView(bubble,p);
+                row.addView(messageLine,new LinearLayout.LayoutParams(-1,-2));
+                if(mine&&activePeerID>0){
+                    TextView receipt=label(messageId<=peerRead?"✓✓ Прочитано":"✓ Отправлено",10,
+                            messageId<=peerRead?0xFF8FB4FF:MUTED,false);
+                    receipt.setGravity(Gravity.RIGHT);
+                    receipt.setTag(Long.valueOf(messageId));
+                    row.addView(receipt,new LinearLayout.LayoutParams(-1,-2));
+                }
                 bubble.setOnLongClickListener(v->{
-                    MessageActionMenu.show(this,bubble,body,mine,
+                    MessageActionMenu.show(this,bubble,body,mine,mine,
                             ()->confirmDeleteMessage(id,messageId,messages,history),
-                            ()->setReply(messageId,body,m.optString("sender_username","")));
+                            ()->setReply(messageId,body,m.optString("sender_username","")),
+                            ()->showEditMessage(id,messageId,body,messages,history),
+                            emoji->sendMessageReaction(id,messageId,emoji,messages,history),
+                            ()->{
+                                if(!m.optString("media_id","").isEmpty())toast("Пересылка файлов пока не поддерживается");
+                                else showForwardMessageDialog(id,messageId);
+                            },
+                            ()->pinMessage(id,messageId));
                     return true;
                 });
                 messages.addView(row);
             }
+            loadPollCards(id,messages,history);
             history.post(()->history.fullScroll(View.FOCUS_DOWN));
+            if(latestMessageId>0){
+                JSONObject readBody=new JSONObject();
+                try{readBody.put("last_read_message_id",latestMessageId);}catch(JSONException ignored){}
+                request("/chats/"+id+"/read",readBody,true,ignored->{});
+            }
+            });
         });
+    }
+
+
+
+    private void showCreatePollDialog(long chatId,LinearLayout messages,ScrollView history){
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(1);
+        panel.setPadding(dp(18),dp(8),dp(18),0);
+        EditText question=field("Вопрос опроса");
+        question.setSingleLine(true);
+        panel.addView(question);
+        EditText[] options=new EditText[4];
+        for(int i=0;i<4;i++){
+            options[i]=field("Вариант "+(i+1));
+            options[i].setSingleLine(true);
+            panel.addView(options[i]);
+        }
+        CheckBox multiple=new CheckBox(this);
+        multiple.setText("Можно выбрать несколько вариантов");
+        multiple.setTextColor(TEXT);
+        panel.addView(multiple);
+        CheckBox anonymous=new CheckBox(this);
+        anonymous.setText("Анонимный опрос");
+        anonymous.setTextColor(TEXT);
+        anonymous.setChecked(true);
+        panel.addView(anonymous);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Новый опрос").setView(panel)
+                .setNegativeButton("Отмена",null).setPositiveButton("Создать",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{
+            String title=question.getText().toString().trim();
+            JSONArray values=new JSONArray();
+            for(EditText option:options){
+                String value=option.getText().toString().trim();
+                if(!value.isEmpty())values.put(value);
+            }
+            if(title.isEmpty()||values.length()<2){
+                toast("Укажите вопрос и минимум два варианта");
+                return;
+            }
+            JSONObject body=new JSONObject();
+            try{
+                body.put("question",title);
+                body.put("options",values);
+                body.put("multiple_choice",multiple.isChecked());
+                body.put("anonymous",anonymous.isChecked());
+            }catch(JSONException ignored){}
+            request("/chats/"+chatId+"/polls",body,true,result->{
+                dialog.dismiss();
+                refreshMessages(chatId,messages,history);
+                toast("Опрос опубликован");
+            },(error,status)->toast(error.optString("error","Не удалось создать опрос")));
+        }));
+        dialog.show();
+    }
+
+    private void loadPollCards(long chatId,LinearLayout messages,ScrollView history){
+        requestGet("/chats/"+chatId+"/polls",result->{
+            if(currentChat!=chatId)return;
+            JSONArray polls=result.optJSONArray("polls");
+            if(polls==null||polls.length()==0)return;
+            TextView section=label("ОПРОСЫ",11,MUTED,true);
+            section.setPadding(dp(4),dp(14),dp(4),dp(7));
+            messages.addView(section);
+            for(int i=0;i<polls.length();i++){
+                JSONObject poll=polls.optJSONObject(i);
+                if(poll==null)continue;
+                LinearLayout card=new LinearLayout(this);
+                card.setOrientation(1);
+                card.setPadding(dp(14),dp(12),dp(14),dp(12));
+                card.setBackground(round(PANEL,18));
+                LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
+                cp.setMargins(dp(2),dp(5),dp(2),dp(8));
+                messages.addView(card,cp);
+                card.addView(label(poll.optString("question","Опрос"),15,TEXT,true));
+                card.addView(label((poll.optBoolean("closed")?"Завершён · ":"")+
+                        poll.optLong("total_votes",0)+" голосов"+
+                        (poll.optBoolean("anonymous")?" · анонимно":""),11,MUTED,false));
+                JSONArray options=poll.optJSONArray("options");
+                if(options==null)continue;
+                boolean multi=poll.optBoolean("multiple_choice");
+                RadioGroup radio=new RadioGroup(this);
+                radio.setOrientation(RadioGroup.VERTICAL);
+                ArrayList<CheckBox> checks=new ArrayList<>();
+                for(int j=0;j<options.length();j++){
+                    JSONObject option=options.optJSONObject(j);
+                    if(option==null)continue;
+                    long optionID=option.optLong("id");
+                    String labelText=option.optString("text")+"  ·  "+option.optLong("votes");
+                    if(multi){
+                        CheckBox check=new CheckBox(this);
+                        check.setText(labelText);
+                        check.setTextColor(TEXT);
+                        check.setTag(Long.valueOf(optionID));
+                        check.setChecked(option.optBoolean("selected"));
+                        checks.add(check);
+                        card.addView(check);
+                    }else{
+                        RadioButton choice=new RadioButton(this);
+                        choice.setId(View.generateViewId());
+                        choice.setText(labelText);
+                        choice.setTextColor(TEXT);
+                        choice.setTag(Long.valueOf(optionID));
+                        radio.addView(choice);
+                        if(option.optBoolean("selected"))choice.setChecked(true);
+                    }
+                }
+                if(!multi)card.addView(radio);
+                if(!poll.optBoolean("closed")){
+                    TextView vote=label("Проголосовать",13,Color.WHITE,true);
+                    vote.setGravity(Gravity.CENTER);
+                    vote.setPadding(dp(14),dp(10),dp(14),dp(10));
+                    vote.setBackground(round(ACCENT,18));
+                    LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(-1,-2);
+                    vp.topMargin=dp(8);
+                    card.addView(vote,vp);
+                    vote.setOnClickListener(v->{
+                        JSONArray selected=new JSONArray();
+                        if(multi){
+                            for(CheckBox check:checks)if(check.isChecked()&&check.getTag() instanceof Long)
+                                selected.put((Long)check.getTag());
+                        }else{
+                            int checked=radio.getCheckedRadioButtonId();
+                            RadioButton choice=radio.findViewById(checked);
+                            if(choice!=null&&choice.getTag() instanceof Long)selected.put((Long)choice.getTag());
+                        }
+                        if(selected.length()==0){toast("Выберите вариант");return;}
+                        JSONObject body=new JSONObject();
+                        try{body.put("option_ids",selected);}catch(JSONException ignored){}
+                        vote.setEnabled(false);
+                        request("/chats/"+chatId+"/polls/"+poll.optLong("id")+"/vote",body,true,voteResult->{
+                            refreshMessages(chatId,messages,history);
+                        },(error,status)->{
+                            vote.setEnabled(true);
+                            toast(error.optString("error","Не удалось проголосовать"));
+                        });
+                    });
+                }
+            }
+        });
+    }
+
+    private void showEditMessage(long chatId,long messageId,String oldText,
+                                 LinearLayout messages,ScrollView history){
+        if(messageId<=0)return;
+
+        android.app.Dialog dialog=new android.app.Dialog(this);
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(20),dp(20),dp(20),dp(14));
+        panel.setBackground(round(PANEL,24));
+
+        TextView title=label("Редактировать сообщение",19,TEXT,true);
+        title.setPadding(0,0,0,dp(14));
+        panel.addView(title);
+
+        EditText input=field("Введите текст сообщения");
+        input.setText(oldText);
+        input.setMinLines(3);
+        input.setMaxLines(7);
+        input.setGravity(Gravity.TOP|Gravity.LEFT);
+        input.setSelection(input.length());
+        panel.addView(input);
+
+        LinearLayout buttons=new LinearLayout(this);
+        buttons.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+
+        TextView cancel=label("Отмена",14,MUTED,true);
+        cancel.setGravity(Gravity.CENTER);
+        cancel.setPadding(dp(15),dp(13),dp(15),dp(13));
+        buttons.addView(cancel);
+
+        TextView save=label("Сохранить",14,Color.WHITE,true);
+        save.setGravity(Gravity.CENTER);
+        save.setPadding(dp(18),dp(13),dp(18),dp(13));
+        save.setBackground(round(ACCENT,22));
+        LinearLayout.LayoutParams saveParams=new LinearLayout.LayoutParams(-2,-2);
+        saveParams.leftMargin=dp(8);
+        buttons.addView(save);
+
+        LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);
+        bp.topMargin=dp(12);
+        panel.addView(buttons,bp);
+
+        dialog.setContentView(panel);
+        android.view.Window window=dialog.getWindow();
+        if(window!=null){
+            window.setBackgroundDrawableResource(android.R.color.transparent);
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            android.view.WindowManager.LayoutParams attrs=window.getAttributes();
+            attrs.dimAmount=0.68f;
+            window.setAttributes(attrs);
+        }
+
+        cancel.setOnClickListener(v->dialog.dismiss());
+        save.setOnClickListener(v->{
+            String text=input.getText().toString().trim();
+            if(text.isEmpty()){
+                toast("Сообщение не может быть пустым");
+                return;
+            }
+            if(text.equals(oldText)){
+                dialog.dismiss();
+                return;
+            }
+            JSONObject payload=new JSONObject();
+            try{
+                payload.put("text",text);
+            }catch(JSONException e){
+                toast("Не удалось подготовить сообщение");
+                return;
+            }
+            save.setEnabled(false);
+            requestMethod("PUT","/chats/"+chatId+"/messages/"+messageId,
+                    payload,true,result->{
+                        dialog.dismiss();
+                        if(currentChat==chatId)refreshMessages(chatId,messages,history);
+                        toast("Сообщение изменено");
+                    },(error,status)->{
+                        save.setEnabled(true);
+                        toast(error.optString("error","Не удалось изменить сообщение"));
+                    });
+        });
+
+        dialog.show();
+        if(window!=null){
+            window.setLayout(
+                    getResources().getDisplayMetrics().widthPixels-dp(36),
+                    android.view.WindowManager.LayoutParams.WRAP_CONTENT);
+        }
+        input.requestFocus();
+        input.postDelayed(()->{
+            android.view.inputmethod.InputMethodManager imm=
+                    (android.view.inputmethod.InputMethodManager)
+                    getSystemService(INPUT_METHOD_SERVICE);
+            if(imm!=null)imm.showSoftInput(input,
+                    android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+        },180);
+    }
+
+    private void updatePinnedBanner(long chatId,LinearLayout messages,ScrollView history){
+        requestGet("/chats/"+chatId+"/pin",result->{
+            if(currentChat!=chatId||activePinnedBanner==null)return;
+            JSONObject pinned=result.optJSONObject("pinned_message");
+            if(pinned==null){
+                activePinnedBanner.setVisibility(View.GONE);
+                activePinnedBanner.setTag(null);
+                return;
+            }
+            long messageId=pinned.optLong("id",0);
+            String text=pinned.optString("body","");
+            if(text.isEmpty())text=pinned.optString("media_name","Вложение");
+            if(text.length()>90)text=text.substring(0,87)+"…";
+            activePinnedBanner.setText("⌖ Закреплено: "+text);
+            activePinnedBanner.setTag(Long.valueOf(messageId));
+            activePinnedBanner.setVisibility(View.VISIBLE);
+        });
+    }
+
+    private void showForwardMessageDialog(long sourceChatId,long messageId){
+        requestGet("/chats",result->{
+            JSONArray chats=result.optJSONArray("chats");
+            if(chats==null||chats.length()==0){toast("Нет чатов для пересылки");return;}
+            ArrayList<JSONObject> targets=new ArrayList<>();
+            ArrayList<String> labels=new ArrayList<>();
+            for(int i=0;i<chats.length();i++){
+                JSONObject chat=chats.optJSONObject(i);
+                if(chat==null)continue;
+                long chatId=chat.optLong("id");
+                if(chatId==sourceChatId)continue;
+                String kind=chat.optString("kind","direct");
+                String title=chat.optString("title","");
+                if(title.isEmpty())title=chat.optString("peer_display_name","");
+                if(title.isEmpty())title="@"+chat.optString("peer_username","чат");
+                labels.add(("channel".equals(kind)?"📢 ":"group".equals(kind)?"👥 ":"")+title);
+                targets.add(chat);
+            }
+            if(targets.isEmpty()){toast("Нет других чатов");return;}
+            new AlertDialog.Builder(this).setTitle("Переслать в…")
+                    .setItems(labels.toArray(new String[0]),(dialog,index)->{
+                        long destination=targets.get(index).optLong("id");
+                        JSONObject body=new JSONObject();
+                        try{body.put("destination_chat_id",destination);}catch(JSONException ignored){}
+                        request("/chats/"+sourceChatId+"/messages/"+messageId+"/forward",body,true,forwarded->{
+                            toast("Сообщение переслано");
+                            cachedChats=null;
+                        });
+                    }).setNegativeButton("Отмена",null).show();
+        });
+    }
+
+    private void pinMessage(long chatId,long messageId){
+        JSONObject body=new JSONObject();
+        try{body.put("message_id",messageId);}catch(JSONException ignored){}
+        request("/chats/"+chatId+"/pin",body,true,result->{
+            toast("Сообщение закреплено");
+            if(activeMessages!=null&&activeHistory!=null)updatePinnedBanner(chatId,activeMessages,activeHistory);
+        },(error,status)->toast(status==404?"Недостаточно прав или сообщение недоступно":"Не удалось закрепить"));
+    }
+
+    private void sendMessageReaction(long chatId,long messageId,String emoji,
+                                     LinearLayout messages,ScrollView history){
+        if(messageId<=0)return;
+        JSONObject payload=new JSONObject();
+        try{
+            payload.put("emoji",emoji);
+        }catch(JSONException e){
+            toast("Не удалось добавить реакцию");
+            return;
+        }
+        requestMethod("POST","/chats/"+chatId+"/messages/"+messageId+"/reactions",
+                payload,true,result->{
+                    if(currentChat==chatId)refreshMessages(chatId,messages,history);
+                },(error,status)->{
+                    String code=error.optString("error","");
+                    if("reaction_limit_reached".equals(code)){
+                        toast("Можно поставить не более 3 реакций на сообщение");
+                    }else{
+                        toast(code.isEmpty()?"Не удалось добавить реакцию":code);
+                    }
+                });
     }
 
     private void setReply(long messageId,String body,String sender){
         replyToMessageId=messageId;replyToBody=body;replyToSender=sender;
-        if(replyPreview!=null){replyPreview.removeAllViews();replyPreview.addView(label(sender.isEmpty()?"Ответ на сообщение":"Ответ на @"+sender,12,0xFF76A7FF,true));replyPreview.addView(label(body,13,TEXT,false));replyPreview.setVisibility(View.VISIBLE);}
+        if(replyPreview!=null){replyPreview.removeAllViews();replyPreview.addView(label(sender.isEmpty()?"Ответ на сообщение":"Ответ на @"+sender,12,0xFF9AB5FF,true));replyPreview.addView(label(body,13,TEXT,false));replyPreview.setVisibility(View.VISIBLE);}
     }
     private void clearReply(){replyToMessageId=0;replyToBody="";replyToSender="";if(replyPreview!=null)replyPreview.setVisibility(View.GONE);}
     private void scrollToMessage(LinearLayout messages,ScrollView history,long targetID){
-        for(int i=0;i<messages.getChildCount();i++){View child=messages.getChildAt(i);Object tag=child.getTag();if(tag instanceof Long&&((Long)tag)==targetID){history.smoothScrollTo(0,child.getTop());child.setBackground(round(0xFF263B55,12));return;}}
+        for(int i=0;i<messages.getChildCount();i++){
+            View child=messages.getChildAt(i);
+            Object tag=child.getTag();
+            if(tag instanceof Long&&((Long)tag)==targetID){
+                if(clearHighlightTask!=null)uiHandler.removeCallbacks(clearHighlightTask);
+                if(highlightedMessage!=null&&highlightedMessage!=child)highlightedMessage.setBackgroundColor(Color.TRANSPARENT);
+                highlightedMessage=child;
+                child.setBackground(round(0xFF263B55,13));
+                history.smoothScrollTo(0,Math.max(0,child.getTop()-dp(24)));
+                clearHighlightTask=()->{
+                    if(highlightedMessage==child){
+                        ValueAnimator fade=ValueAnimator.ofObject(new android.animation.ArgbEvaluator(),0xFF263B55,0x00090B10);
+                        fade.setDuration(260);
+                        fade.addUpdateListener(animation->child.setBackground(round((Integer)animation.getAnimatedValue(),13)));
+                        fade.addListener(new android.animation.AnimatorListenerAdapter(){
+                            @Override public void onAnimationEnd(android.animation.Animator animation){
+                                if(highlightedMessage==child){child.setBackgroundColor(Color.TRANSPARENT);highlightedMessage=null;}
+                            }
+                        });
+                        fade.start();
+                    }
+                };
+                uiHandler.postDelayed(clearHighlightTask,5000);
+                return;
+            }
+        }
         toast("Исходное сообщение не загружено");
     }
 
@@ -474,6 +1759,246 @@ public final class MainActivity extends Activity {
                 if(currentChat==id&&composer!=null&&composer.getText().length()==0)composer.setText(text);
             });
     }
+    private void ensureRealtimeConnected(){
+        if(token.isEmpty()||realtimeSocket!=null||realtimeConnecting)return;
+        realtimeConnecting=true;
+        if(realtimeHttp==null){
+            realtimeHttp=new OkHttpClient.Builder()
+                    .readTimeout(0,TimeUnit.MILLISECONDS)
+                    .pingInterval(25,TimeUnit.SECONDS)
+                    .build();
+        }
+        Request request=new Request.Builder()
+                .url(API.replace("https://","wss://")+"/realtime")
+                .header("Authorization","Bearer "+token)
+                .build();
+        realtimeSocket=realtimeHttp.newWebSocket(request,new WebSocketListener(){
+            @Override public void onOpen(WebSocket socket,Response response){
+                realtimeConnecting=false;
+                realtimeSocket=socket;
+                realtimeReconnectScheduled=false;
+                sendRealtimePresenceSubscribe(currentChat);
+            }
+            @Override public void onMessage(WebSocket socket,String text){
+                handleRealtimeEvent(text);
+            }
+            @Override public void onClosed(WebSocket socket,int code,String reason){
+                if(realtimeSocket==socket)realtimeSocket=null;
+                realtimeConnecting=false;
+                scheduleRealtimeReconnect();
+            }
+            @Override public void onFailure(WebSocket socket,Throwable error,Response response){
+                if(realtimeSocket==socket)realtimeSocket=null;
+                realtimeConnecting=false;
+                if(response!=null&&response.code()==401){
+                    runOnUiThread(()->{
+                        prefs.edit().clear().apply();
+                        token="";
+                        stopRealtime();
+                        showAuth();
+                        toast("Сессия завершена. Войдите снова.");
+                    });
+                }else{
+                    scheduleRealtimeReconnect();
+                }
+            }
+        });
+    }
+
+    private void scheduleRealtimeReconnect(){
+        if(token.isEmpty()||realtimeReconnectScheduled)return;
+        realtimeReconnectScheduled=true;
+        realtimeReconnectTask=()->{
+            realtimeReconnectScheduled=false;
+            ensureRealtimeConnected();
+        };
+        uiHandler.postDelayed(realtimeReconnectTask,3000);
+    }
+
+    private void stopRealtime(){
+        if(realtimeReconnectTask!=null)uiHandler.removeCallbacks(realtimeReconnectTask);
+        realtimeReconnectTask=null;
+        realtimeReconnectScheduled=false;
+        realtimeConnecting=false;
+        if(realtimeSocket!=null){
+            realtimeSocket.close(1000,"client closing");
+            realtimeSocket=null;
+        }
+        if(realtimeHttp!=null){
+            realtimeHttp.dispatcher().executorService().shutdown();
+            realtimeHttp.connectionPool().evictAll();
+            realtimeHttp=null;
+        }
+    }
+
+    private void sendRealtimePresenceSubscribe(long chatId){
+        WebSocket socket=realtimeSocket;
+        if(socket==null||chatId<=0)return;
+        JSONObject event=new JSONObject();
+        try{
+            event.put("type","presence.subscribe");
+            event.put("chat_id",chatId);
+            socket.send(event.toString());
+        }catch(JSONException ignored){}
+    }
+
+    private void sendRealtimeTyping(long chatId){
+        if(realtimeSocket==null)return;
+        JSONObject event=new JSONObject();
+        try{
+            event.put("type","typing");
+            event.put("chat_id",chatId);
+            realtimeSocket.send(event.toString());
+        }catch(JSONException ignored){}
+    }
+
+    private void handleRealtimeEvent(String raw){
+        try{
+            JSONObject event=new JSONObject(raw);
+            String type=event.optString("type","");
+            long chatId=event.optLong("chat_id",0);
+            runOnUiThread(()->{
+                if("chat.pinned".equals(type)||"chat.unpinned".equals(type)){
+                    if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null)
+                        updatePinnedBanner(chatId,activeMessages,activeHistory);
+                }else if("poll.created".equals(type)||"poll.updated".equals(type)||"poll.closed".equals(type)){
+                    if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null)
+                        refreshMessages(chatId,activeMessages,activeHistory);
+                }else if("message.created".equals(type)||"message.deleted".equals(type)){
+                    cachedChats=null;
+                    if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null){
+                        refreshMessages(chatId,activeMessages,activeHistory);
+                    }else if(activeChatsList!=null){
+                        requestGet("/chats",result->{
+                            JSONArray fresh=result.optJSONArray("chats");
+                            if(fresh!=null){
+                                cachedChats=fresh;
+                                if(activeChatsList!=null)renderChats(activeChatsList,fresh);
+                            }
+                        });
+                    }
+                }else if("user.presence".equals(type)&&currentChat==chatId&&
+                        event.optLong("user_id",0)==activePeerID&&activePeerID>0&&activeChatStatus!=null){
+                    activeChatSubtitle=event.optBoolean("online")?"в сети":"не в сети";
+                    activeChatStatus.setText(activeChatSubtitle);
+                }else if("chat.read".equals(type)&&currentChat==chatId&&
+                        event.optLong("user_id",0)==activePeerID&&activePeerID>0){
+                    activePeerReadCursor=Math.max(activePeerReadCursor,event.optLong("message_id",0));
+                    if(activeMessages!=null){
+                        for(int i=0;i<activeMessages.getChildCount();i++){
+                            View row=activeMessages.getChildAt(i);
+                            if(!(row instanceof LinearLayout))continue;
+                            LinearLayout messageRow=(LinearLayout)row;
+                            for(int j=0;j<messageRow.getChildCount();j++){
+                                View child=messageRow.getChildAt(j);
+                                if(child instanceof TextView&&child.getTag() instanceof Long){
+                                    long messageId=(Long)child.getTag();
+                                    if(messageId<=activePeerReadCursor){
+                                        ((TextView)child).setText("✓✓ Прочитано");
+                                        ((TextView)child).setTextColor(0xFF8FB4FF);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }else if("typing".equals(type)&&currentChat==chatId&&activeChatStatus!=null){
+                    activeChatStatus.setText("печатает…");
+                    uiHandler.postDelayed(()->{
+                        if(currentChat==chatId&&activeChatStatus!=null)
+                            activeChatStatus.setText(activeChatSubtitle);
+                    },2500);
+                }
+            });
+        }catch(JSONException ignored){}
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data){
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=REQUEST_PICK_CHAT_MEDIA||resultCode!=RESULT_OK||data==null)return;
+        Uri uri=data.getData();
+        if(uri==null||pendingMediaChatId<=0)return;
+        uploadChatMedia(pendingMediaChatId,uri,pendingMediaCaption,pendingMediaMessages,pendingMediaHistory);
+    }
+
+    private void uploadChatMedia(long chatId,Uri uri,String caption,LinearLayout messages,ScrollView history){
+        io.execute(()->{
+            HttpURLConnection connection=null;
+            int status=0;
+            JSONObject response=new JSONObject();
+            try{
+                String boundary="----kentgram-"+UUID.randomUUID().toString().replace("-","");
+                String fileName=queryDisplayName(uri);
+                String contentType=getContentResolver().getType(uri);
+                if(contentType==null)contentType="application/octet-stream";
+                connection=(HttpURLConnection)new URL(API+"/chats/"+chatId+"/media").openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(60000);
+                connection.setDoOutput(true);
+                connection.setChunkedStreamingMode(8192);
+                connection.setRequestProperty("Authorization","Bearer "+token);
+                connection.setRequestProperty("Accept","application/json");
+                connection.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
+                try(OutputStream output=connection.getOutputStream()){
+                    writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n"+caption+"\r\n");
+                    String safeName=fileName.replace("\\","_").replace("\"","_").replace("\r","").replace("\n","");
+                    writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\""+safeName+"\"\r\nContent-Type: "+contentType+"\r\n\r\n");
+                    try(InputStream input=getContentResolver().openInputStream(uri)){
+                        if(input==null)throw new IOException("Unable to open selected file");
+                        byte[] buffer=new byte[8192];
+                        int count;
+                        while((count=input.read(buffer))!=-1)output.write(buffer,0,count);
+                    }
+                    writeMultipart(output,"\r\n--"+boundary+"--\r\n");
+                }
+                status=connection.getResponseCode();
+                InputStream input=status>=200&&status<300?connection.getInputStream():connection.getErrorStream();
+                if(input!=null){
+                    ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+                    byte[] buffer=new byte[4096];
+                    int count;
+                    while((count=input.read(buffer))!=-1)bytes.write(buffer,0,count);
+                    try{response=new JSONObject(bytes.toString("UTF-8"));}catch(JSONException ignored){}
+                    input.close();
+                }
+            }catch(Exception error){
+                try{response.put("error","media_upload_failed");}catch(JSONException ignored){}
+            }finally{
+                if(connection!=null)connection.disconnect();
+            }
+            final int resultCode=status;
+            final JSONObject result=response;
+            runOnUiThread(()->{
+                if(resultCode>=200&&resultCode<300){
+                    if(currentChat==chatId&&messages!=null&&history!=null)refreshMessages(chatId,messages,history);
+                    if(currentChat==chatId&&composer!=null&&composer.getText().toString().trim().equals(caption))
+                        composer.setText("");
+                    toast("Файл отправлен");
+                }else{
+                    toast(result.optString("error","Не удалось отправить файл")+" ("+resultCode+")");
+                }
+                pendingMediaChatId=0;
+                pendingMediaCaption="";
+                pendingMediaMessages=null;
+                pendingMediaHistory=null;
+            });
+        });
+    }
+
+    private String queryDisplayName(Uri uri){
+        try(Cursor cursor=getContentResolver().query(uri,null,null,null,null)){
+            if(cursor!=null&&cursor.moveToFirst()){
+                int column=cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if(column>=0)return cursor.getString(column);
+            }
+        }catch(Exception ignored){}
+        return "attachment";
+    }
+
+    private void writeMultipart(OutputStream output,String value)throws IOException{
+        output.write(value.getBytes(StandardCharsets.UTF_8));
+    }
+
     private interface Done{void accept(JSONObject value);}
     private void requestGet(String path,Done done){request(path,null,true,done);}
     private interface Failed{void accept(JSONObject value,int status);}
@@ -481,12 +2006,73 @@ public final class MainActivity extends Activity {
         request(path,body,auth,done,null);
     }
     private void request(String path,JSONObject body,boolean auth,Done done,Failed failed){
-        io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);String responseText=b.toString("UTF-8");try{out=new JSONObject(responseText);}catch(JSONException parseError){out=new JSONObject();out.put("error",status==404?"endpoint_not_found":status>=500?"server_error":"http_error");}}c.disconnect();}catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{
-            if(code>=200&&code<300){done.accept(result);return;}
-            if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}
-            else KentDialog.showMessage(this,code==404?"Маршрут не найден":"Не удалось выполнить запрос",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
-            if(failed!=null)failed.accept(result,code);
-        });});
+        requestMethod(body==null?"GET":"POST",path,body,auth,done,failed);
+    }
+    private void requestMethod(String method,String path,JSONObject body,boolean auth,
+                               Done done,Failed failed){
+        io.execute(()->{
+            JSONObject out=new JSONObject();
+            int status=0;
+            try{
+                HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();
+                c.setRequestMethod(method);
+                c.setConnectTimeout(12000);
+                c.setReadTimeout(12000);
+                c.setRequestProperty("Accept","application/json");
+                if(auth&&!token.isEmpty())
+                    c.setRequestProperty("Authorization","Bearer "+token);
+                if(body!=null){
+                    c.setDoOutput(true);
+                    c.setRequestProperty("Content-Type","application/json");
+                    try(OutputStream stream=c.getOutputStream()){
+                        stream.write(body.toString().getBytes(StandardCharsets.UTF_8));
+                    }
+                }
+                status=c.getResponseCode();
+                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
+                if(in!=null){
+                    ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+                    byte[] buffer=new byte[4096];
+                    int count;
+                    while((count=in.read(buffer))>0)bytes.write(buffer,0,count);
+                    try{
+                        out=new JSONObject(bytes.toString("UTF-8"));
+                    }catch(JSONException parseError){
+                        out=new JSONObject();
+                        out.put("error",status==404?"endpoint_not_found":
+                                status>=500?"server_error":"http_error");
+                    }
+                }
+                c.disconnect();
+            }catch(Exception e){
+                try{out.put("error","connection_failed");}
+                catch(Exception ignored){}
+            }
+
+            final JSONObject result=out;
+            final int code=status;
+            runOnUiThread(()->{
+                if(code>=200&&code<300){
+                    if(done!=null)done.accept(result);
+                    return;
+                }
+                if(code==401&&auth){
+                    prefs.edit().clear().apply();
+                    token="";
+                    showAuth();
+                    toast("Войдите снова");
+                    return;
+                }
+                if(failed!=null){
+                    failed.accept(result,code);
+                    return;
+                }
+                KentDialog.showMessage(this,
+                        code==404?"Маршрут не найден":"Не удалось выполнить запрос",
+                        result.optString("error","Ошибка соединения")+" ("+code+")",
+                        "Понятно",null);
+            });
+        });
     }
     private void requestDelete(String path,Done done){
         io.execute(()->{
@@ -527,12 +2113,96 @@ public final class MainActivity extends Activity {
             });
         });
     }
+    private void loadChatMedia(ImageView target,String url){
+        if(target==null||url==null||url.trim().isEmpty())return;
+        Bitmap cached=mediaCache.get(url);
+        if(cached!=null){target.setImageBitmap(cached);return;}
+        ArrayList<ImageView> waiting=mediaTargets.computeIfAbsent(url,key->new ArrayList<>());
+        waiting.add(target);
+        if(!mediaLoading.add(url))return;
+        io.execute(()->{
+            HttpURLConnection connection=null;
+            Bitmap bitmap=null;
+            try{
+                connection=(HttpURLConnection)new URL(url).openConnection();
+                connection.setConnectTimeout(10000);
+                connection.setReadTimeout(15000);
+                connection.setRequestProperty("Authorization","Bearer "+token);
+                try(InputStream input=connection.getInputStream()){
+                    bitmap=BitmapFactory.decodeStream(input);
+                }
+            }catch(Exception ignored){}
+            finally{if(connection!=null)connection.disconnect();}
+            final Bitmap loaded=bitmap;
+            runOnUiThread(()->{
+                mediaLoading.remove(url);
+                ArrayList<ImageView> targets=mediaTargets.remove(url);
+                if(loaded!=null){
+                    mediaCache.put(url,loaded);
+                    if(targets!=null)for(ImageView view:targets)
+                        if(!isFinishing())view.setImageBitmap(loaded);
+                }
+            });
+        });
+    }
+
+    private void showChatImage(String url){
+        ImageView image=new ImageView(this);
+        image.setAdjustViewBounds(true);
+        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        image.setBackgroundColor(Color.BLACK);
+        loadChatMedia(image,url);
+        new AlertDialog.Builder(this).setView(image).setPositiveButton("Закрыть",null).show();
+    }
+
+    private String formatBytes(long bytes){
+        if(bytes<1024)return bytes+" Б";
+        if(bytes<1024*1024)return String.format(java.util.Locale.ROOT,"%.1f КБ",bytes/1024.0);
+        return String.format(java.util.Locale.ROOT,"%.1f МБ",bytes/(1024.0*1024.0));
+    }
+
+    private void loadChatAvatar(ImageView target,String url){
+        if(target==null||url==null||url.trim().isEmpty())return;
+        Bitmap cached=avatarCache.get(url);
+        if(cached!=null){target.setImageBitmap(cached);return;}
+        ArrayList<ImageView> targets=avatarTargets.computeIfAbsent(url,key->new ArrayList<>());
+        targets.add(target);
+        if(!avatarLoading.add(url))return;
+        io.execute(()->{
+            HttpURLConnection connection=null;
+            Bitmap bitmap=null;
+            try{
+                connection=(HttpURLConnection)new URL(url).openConnection();
+                connection.setConnectTimeout(6000);connection.setReadTimeout(6000);
+                connection.setInstanceFollowRedirects(true);
+                try(InputStream input=connection.getInputStream()){bitmap=BitmapFactory.decodeStream(input);}
+            }catch(Exception ignored){}
+            finally{if(connection!=null)connection.disconnect();}
+            final Bitmap loaded=bitmap;
+            runOnUiThread(()->{
+                avatarLoading.remove(url);
+                ArrayList<ImageView> waiting=avatarTargets.remove(url);
+                if(loaded!=null){
+                    avatarCache.put(url,loaded);
+                    if(waiting!=null)for(ImageView view:waiting)
+                        if(!isFinishing()&&view.getWindowToken()!=null)view.setImageBitmap(loaded);
+                }
+            });
+        });
+    }
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
-    private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(13),dp(8),dp(13),dp(8));e.setBackground(round(PANEL,12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
-    private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(TEXT);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setPadding(dp(18),dp(8),dp(18),dp(8));b.setBackground(round(0xFF17649A,28));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);b.setLayoutParams(p);return b;}
+    private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(0xFF778397);e.setHint(hint);e.setTextSize(14);e.setPadding(dp(14),dp(10),dp(14),dp(10));e.setBackground(round(PANEL,15));e.setSingleLine(false);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
+    private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setPadding(dp(18),dp(8),dp(18),dp(8));b.setBackground(round(ACCENT,28));b.setElevation(dp(2));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);b.setLayoutParams(p);return b;}
     private TextView label(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);if(bold)t.setTypeface(null,Typeface.BOLD);return t;}
     private android.graphics.drawable.GradientDrawable round(int color,int radius){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
     private void toast(String s){KentDialog.showToast(this,s);}
-    @Override protected void onDestroy(){super.onDestroy();io.shutdown();}
+    @Override public void onBackPressed(){
+        if(onNewChatScreen||onChatScreen){showChats();return;}
+        super.onBackPressed();
+    }
+    @Override protected void onDestroy(){
+        if(clearHighlightTask!=null)uiHandler.removeCallbacks(clearHighlightTask);
+        stopRealtime();
+        super.onDestroy();io.shutdown();}
 }

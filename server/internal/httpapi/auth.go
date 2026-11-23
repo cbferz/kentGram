@@ -46,7 +46,7 @@ type registerRequest struct {
 }
 
 type loginRequest struct {
-	Email      string `json:"email"`
+	Username   string `json:"username"`
 	Password   string `json:"password"`
 	DeviceName string `json:"device_name"`
 }
@@ -106,16 +106,24 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
-	email := normalizeEmail(q.Email)
+	username := strings.TrimSpace(q.Username)
+	if !usernamePattern.MatchString(username) {
+		// Use the same generic credential error as an unknown account.
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(q.Password))
+		securityEvent(r, "login_failed")
+		writeError(w, http.StatusUnauthorized, "invalid_credentials")
+		return
+	}
 
-	if ok, retry := a.loginLimiter.allow("login:"+email, time.Now()); !ok {
+	lockKey := strings.ToLower(username)
+	if ok, retry := a.loginLimiter.allow("login:"+lockKey, time.Now()); !ok {
 		securityEvent(r, "login_locked_out")
 		w.Header().Set("Retry-After", strconv.Itoa(max(1, int(retry.Seconds()))))
 		writeError(w, http.StatusTooManyRequests, "too_many_login_attempts")
 		return
 	}
 
-	user, err := a.db.UserByEmail(r.Context(), email)
+	user, err := a.db.UserByUsername(r.Context(), username)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "login_failed")
 		return
@@ -275,12 +283,28 @@ func (a *API) signAccess(uid, sid int64) (string, error) {
 func (a *API) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.SplitN(strings.TrimSpace(r.Header.Get("Authorization")), " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		rawToken := ""
+		if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+			rawToken = strings.TrimSpace(parts[1])
+		}
+		// The browser WebSocket API cannot set Authorization headers. For the
+		// realtime endpoint only, accept a bearer token in a negotiated
+		// subprotocol; never put access tokens in URLs or query strings.
+		if rawToken == "" && r.URL.Path == "/api/v1/realtime" {
+			for _, protocol := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
+				protocol = strings.TrimSpace(protocol)
+				if strings.HasPrefix(protocol, "bearer.") {
+					rawToken = strings.TrimPrefix(protocol, "bearer.")
+					break
+				}
+			}
+		}
+		if rawToken == "" {
 			writeError(w, http.StatusUnauthorized, "missing_bearer_token")
 			return
 		}
 
-		uid, sid, ok := a.parseAccess(parts[1])
+		uid, sid, ok := a.parseAccess(rawToken)
 		if !ok {
 			writeError(w, http.StatusUnauthorized, "invalid_token")
 			return
