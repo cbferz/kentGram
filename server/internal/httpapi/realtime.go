@@ -74,14 +74,27 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Subscribe before replay to close the replay/subscribe race.
-	pgConn, err := a.db.Pool.Acquire(r.Context())
+	select {
+	case a.realtimeSlots <- struct{}{}:
+		defer func() { <-a.realtimeSlots }()
+	default:
+		writeError(w, http.StatusServiceUnavailable, "realtime_capacity_reached")
+		return
+	}
+
+	// A dedicated connection avoids starving the small query pool when many
+	// clients keep their WebSockets open.
+	listener, err := a.db.OpenListener(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "realtime_unavailable")
 		return
 	}
-	defer pgConn.Release()
-	if _, err := pgConn.Exec(r.Context(), "LISTEN kentgram_events"); err != nil {
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = listener.Close(closeCtx)
+	}()
+	if _, err := listener.Exec(r.Context(), "LISTEN kentgram_events"); err != nil {
 		writeError(w, http.StatusServiceUnavailable, "realtime_unavailable")
 		return
 	}
@@ -146,7 +159,7 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 
 	for {
 		waitCtx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
-		_, waitErr := pgConn.Conn().WaitForNotification(waitCtx)
+		_, waitErr := listener.WaitForNotification(waitCtx)
 		cancel()
 
 		select {
