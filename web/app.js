@@ -130,14 +130,7 @@
     $("my-handle").textContent = "@" + state.me.username;
     const avatar = $("my-avatar");
     const avatarFallback = (state.me.display_name || state.me.username || "K").slice(0, 1).toUpperCase();
-    if (state.me.avatar_url) {
-      const image = document.createElement("img");
-      image.src = state.me.avatar_url;
-      image.alt = "Аватар";
-      avatar.replaceChildren(image);
-    } else {
-      avatar.textContent = avatarFallback;
-    }
+    setAvatar(avatar, state.me.avatar_url, avatarFallback);
   }
 
   function setAuthMode(mode) {
@@ -192,6 +185,20 @@
       : (chat.title || chat.username || "Сообщество");
   }
 
+  function setAvatar(element, url, fallback) {
+    if (!element) return;
+    if (url) {
+      const image = document.createElement("img");
+      image.src = url;
+      image.alt = "";
+      image.loading = "lazy";
+      image.onerror = () => { element.textContent = fallback || "K"; };
+      element.replaceChildren(image);
+    } else {
+      element.textContent = fallback || "K";
+    }
+  }
+
   function avatarText(chat) {
     return chatName(chat).slice(0, 1).toUpperCase() || "K";
   }
@@ -210,7 +217,9 @@
       const item = node("button", "chat-item" + (state.chat?.id === chat.id ? " active" : ""));
       item.type = "button";
       item.setAttribute("aria-current", state.chat?.id === chat.id ? "page" : "false");
-      item.append(node("div", "avatar", avatarText(chat)));
+      const avatar = node("div", "avatar");
+      setAvatar(avatar, chat.kind === "direct" ? chat.peer_avatar_url : "", avatarText(chat));
+      item.append(avatar);
       const preview = node("div", "chat-preview");
       preview.append(
         node("strong", "", chatName(chat)),
@@ -633,7 +642,7 @@
     $("chat-title").textContent = chatName(chat);
     $("chat-subtitle").textContent = chat.kind === "direct"
       ? "@" + chat.peer_username : (chat.member_count + " участников");
-    $("chat-avatar").textContent = avatarText(chat);
+    setAvatar($("chat-avatar"), chat.kind === "direct" ? chat.peer_avatar_url : "", avatarText(chat));
     $("manage-members-button").hidden = chat.kind === "direct";
     try {
       await loadMessages(id);
@@ -745,7 +754,8 @@
       for (const person of (data.users || [])) {
         const button = node("button", "person-result");
         button.type = "button";
-        const avatar = node("div", "avatar", (person.display_name || person.username || "?").slice(0, 1).toUpperCase());
+        const avatar = node("div", "avatar");
+        setAvatar(avatar, person.avatar_url, (person.display_name || person.username || "?").slice(0, 1).toUpperCase());
         const info = node("span");
         info.append(node("strong", "", person.display_name || person.username), node("small", "", "@" + person.username));
         button.append(avatar, info);
