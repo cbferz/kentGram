@@ -158,6 +158,13 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 		if waitErr != nil && !errors.Is(waitErr, context.DeadlineExceeded) {
 			return
 		}
+		active, authErr := a.db.SessionActive(r.Context(), sid, uid)
+		if authErr != nil || !active {
+			_ = ws.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "session revoked"),
+				time.Now().Add(2*time.Second))
+			return
+		}
 		if errors.Is(waitErr, context.DeadlineExceeded) {
 			_ = ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
 			continue
