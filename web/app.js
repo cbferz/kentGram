@@ -9,7 +9,7 @@
     refresh: sessionStorage.getItem("kg_refresh") || "",
     me: null, chats: [], chat: null, socket: null, socketTimer: 0,
     socketDelay: 1000, socketConnecting: false, socketGeneration: 0,
-    socketCursor: Number(localStorage.getItem("kg_realtime_cursor") || "0"),
+    socketCursor: localStorage.getItem("kg_realtime_cursor") || "0",
     authMode: "login", searchTimer: 0, toastTimer: 0,
     refreshing: null, booting: false, stopped: false, messageRequest: 0
   };
@@ -495,10 +495,10 @@
         try { batch = JSON.parse(event.data); } catch { return; }
         if (batch.type !== "sync.batch") return;
 
-        const cursor = Number(batch.cursor);
-        if (Number.isSafeInteger(cursor) && cursor >= 0) {
+        const cursor = String(batch.cursor ?? "");
+        if (/^\\d+$/.test(cursor)) {
           state.socketCursor = cursor;
-          localStorage.setItem("kg_realtime_cursor", String(cursor));
+          localStorage.setItem("kg_realtime_cursor", cursor);
         }
 
         const events = Array.isArray(batch.events) ? batch.events : [];
