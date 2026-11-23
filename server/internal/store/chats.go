@@ -110,7 +110,14 @@ func (s *Store) IsChatMember(ctx context.Context, chatID, userID int64) (bool,er
 func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int64, limit int) ([]ChatMessage,error) {
     if limit < 1 || limit > 100 { limit = 50 }
     rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,m.edited_at,(m.sender_id=$2),m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,''),
-        COALESCE(m.media_id,''),COALESCE(media.content_type,''),COALESCE(media.original_name,''),COALESCE(media.size_bytes,0),COALESCE(m.forwarded_from_chat_id,0),COALESCE(m.forwarded_from_message_id,0),m.forwarded_from_username
+        COALESCE(m.media_id,''),COALESCE(media.content_type,''),COALESCE(media.original_name,''),COALESCE(media.size_bytes,0),COALESCE(m.forwarded_from_chat_id,0),COALESCE(m.forwarded_from_message_id,0),m.forwarded_from_username,
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('emoji',r.emoji,'count',r.reaction_count,'reacted',r.reacted) ORDER BY r.emoji)
+          FROM (
+            SELECT emoji,COUNT(*)::bigint AS reaction_count,BOOL_OR(user_id=$2) AS reacted
+            FROM message_reactions WHERE chat_id=m.chat_id AND message_id=m.id GROUP BY emoji
+          ) r
+        ),'[]'::jsonb)
         FROM messages m JOIN users u ON u.id=m.sender_id
         LEFT JOIN messages reply ON reply.id=m.reply_to_message_id AND reply.chat_id=m.chat_id AND reply.deleted_at IS NULL
         LEFT JOIN users reply_user ON reply_user.id=reply.sender_id
