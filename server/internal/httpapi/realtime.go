@@ -1,15 +1,15 @@
 package httpapi
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
-		"github.com/golang-jwt/jwt/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 )
 
@@ -35,9 +35,8 @@ var realtimeUpgrader = websocket.Upgrader{
 	},
 }
 
-// createRealtimeTicket returns a short-lived JWT for browser WebSocket clients.
-// The long-lived access token is sent in an authenticated POST body/header and
-// is never placed in a WebSocket URL or reverse-proxy access log.
+// createRealtimeTicket issues a short-lived JWT for browser WebSocket clients.
+// The long-lived access token is never placed in a WebSocket URL.
 func (a *API) createRealtimeTicket(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	claims := jwt.MapClaims{
@@ -75,8 +74,7 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// LISTEN must be established before the first replay query. This closes the
-	// race where an event could be committed between replay and subscription.
+	// Subscribe before replay to close the replay/subscribe race.
 	pgConn, err := a.db.Pool.Acquire(r.Context())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "realtime_unavailable")
@@ -160,7 +158,7 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 		if waitErr != nil && !errors.Is(waitErr, context.DeadlineExceeded) {
 			return
 		}
-		if errors.Is(waitErr, contextDeadlineExceeded) {
+		if errors.Is(waitErr, context.DeadlineExceeded) {
 			_ = ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
 			continue
 		}
@@ -204,5 +202,3 @@ func (a *API) realtimeIdentity(r *http.Request) (int64, int64, bool) {
 	}
 	return uid, sid, true
 }
-
-var _ = store.RealtimeEvent{}
