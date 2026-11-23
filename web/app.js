@@ -9,7 +9,7 @@
     me: null, chats: [], chat: null, replyToMessageId: 0, socket: null, socketTimer: 0,
     socketDelay: 1000, authMode: "login", searchTimer: 0, toastTimer: 0,
     refreshing: null, booting: false, stopped: false, messageRequest: 0,
-    realtimeCursor: Number(sessionStorage.getItem("kg_realtime_cursor") || 0), realtimeSyncing: false
+    realtimeCursor: 0, realtimeSyncing: false
   };
   const MAX_FILE = 20 * 1024 * 1024;
   const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "application/pdf"]);
@@ -168,6 +168,7 @@
       });
       saveTokens(data);
       state.me = data.user || await api("/me");
+      state.realtimeCursor = Number(sessionStorage.getItem("kg_realtime_cursor_" + state.me.id) || 0);
       await boot();
     } catch (error) {
       $("auth-notice").textContent = translateError(error.message);
@@ -640,7 +641,7 @@
       }
       const highWater = Number(data.cursor || data.high_water || 0);
       if (highWater > state.realtimeCursor) state.realtimeCursor = highWater;
-      sessionStorage.setItem("kg_realtime_cursor", String(state.realtimeCursor));
+      sessionStorage.setItem("kg_realtime_cursor_" + state.me.id, String(state.realtimeCursor));
       if (refreshCurrentChat && state.chat) await loadMessages(state.chat.id);
       if (refreshChats) await loadChats();
     } catch (error) {
