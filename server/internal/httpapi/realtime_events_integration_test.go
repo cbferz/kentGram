@@ -205,3 +205,34 @@ func TestPublicCommunityJoinEmitsOnlyNewMembershipEvent(t *testing.T) {
 		t.Fatalf("idempotent repeat join emitted another event: %s", second.Body.String())
 	}
 }
+
+func TestCommunityOwnershipTransferEmitsRealtimeEvent(t *testing.T) {
+	h := newTestAPI(t).Routes()
+	owner := registerUser(t, h)
+	successor := registerUser(t, h)
+
+	created := call(t, h, http.MethodPost, "/api/v1/chats/community", owner.Access, map[string]any{
+		"kind": "channel", "title": "Ownership realtime",
+	})
+	expectStatus(t, created, http.StatusCreated)
+	chatID := int64(asMap(t, created)["id"].(float64))
+	added := call(t, h, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/members", chatID), owner.Access,
+		map[string]int64{"user_id": successor.ID})
+	expectStatus(t, added, http.StatusCreated)
+
+	transferred := call(t, h, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/transfer-ownership", chatID),
+		owner.Access, map[string]int64{"user_id": successor.ID})
+	expectStatus(t, transferred, http.StatusOK)
+
+	sync := call(t, h, http.MethodGet, "/api/v1/realtime/events?since=0", successor.Access, nil)
+	expectStatus(t, sync, http.StatusOK)
+	events := asMap(t, sync)["events"].([]any)
+	if len(events) != 3 || events[2].(map[string]any)["type"] != "community.ownership_transferred" {
+		t.Fatalf("ownership transfer event missing: %s", sync.Body.String())
+	}
+	payload := events[2].(map[string]any)["payload"].(map[string]any)
+	if int64(payload["previous_owner_id"].(float64)) != owner.ID ||
+		int64(payload["new_owner_id"].(float64)) != successor.ID {
+		t.Fatalf("ownership event payload mismatch: %v", payload)
+	}
+}
