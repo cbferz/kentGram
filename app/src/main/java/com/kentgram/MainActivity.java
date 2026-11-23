@@ -1895,7 +1895,7 @@ public final class MainActivity extends Activity {
                 }else if("poll.created".equals(type)||"poll.updated".equals(type)||"poll.closed".equals(type)){
                     if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null)
                         refreshMessages(chatId,activeMessages,activeHistory);
-                }else if("message.created".equals(type)||"message.deleted".equals(type)){
+                }else if("message.created".equals(type)||"message.edited".equals(type)||"message.deleted".equals(type)||"message.reactions_updated".equals(type)){
                     cachedChats=null;
                     if(currentChat==chatId&&activeMessages!=null&&activeHistory!=null){
                         refreshMessages(chatId,activeMessages,activeHistory);
