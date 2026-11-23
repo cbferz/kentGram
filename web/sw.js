@@ -1,5 +1,5 @@
 const CACHE = "kentgram-web-shell-v4";
-const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
+const SHELL = ["/", "/index.html", "/styles.css", "/redesign.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
