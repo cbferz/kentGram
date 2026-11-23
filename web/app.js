@@ -496,7 +496,7 @@
         if (batch.type !== "sync.batch") return;
 
         const cursor = String(batch.cursor ?? "");
-        if (/^\\d+$/.test(cursor)) {
+        if (/^\d+$/.test(cursor)) {
           state.socketCursor = cursor;
           localStorage.setItem("kg_realtime_cursor", cursor);
         }
