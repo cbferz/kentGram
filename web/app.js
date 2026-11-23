@@ -6,7 +6,7 @@
   const state = {
     access: sessionStorage.getItem("kg_access") || "",
     refresh: sessionStorage.getItem("kg_refresh") || "",
-    me: null, chats: [], chat: null, socket: null, socketTimer: 0,
+    me: null, chats: [], chat: null, replyToMessageId: 0, socket: null, socketTimer: 0,
     socketDelay: 1000, authMode: "login", searchTimer: 0, toastTimer: 0,
     refreshing: null, booting: false, stopped: false, messageRequest: 0
   };
@@ -299,7 +299,90 @@
         box.append(link);
       }
     }
+    if (message.reply_to_message_id) {
+      box.append(node("div", "reply-reference", "Ответ на @" +
+        (message.reply_to_sender_username || "пользователя") + ": " +
+        (message.reply_to_body || "сообщение недоступно")));
+    }
     if (message.body) box.append(node("div", "body", message.body));
+    if (message.edited_at) box.append(node("small", "edited-label", "изменено"));
+    const reactions = node("div", "message-reactions");
+    for (const reaction of (message.reactions || [])) {
+      const chip = node("button", "reaction-chip" + (reaction.reacted ? " selected" : ""),
+        reaction.emoji + " " + reaction.count);
+      chip.type = "button";
+      chip.addEventListener("click", async () => {
+        try {
+          await api("/chats/" + encodeURIComponent(message.chat_id) + "/messages/" +
+            encodeURIComponent(message.id) + "/reactions", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ emoji: reaction.emoji })
+            });
+          if (state.chat?.id === message.chat_id) await loadMessages(message.chat_id);
+        } catch (error) { toast(translateError(error.message)); }
+      });
+      reactions.append(chip);
+    }
+    if (reactions.childElementCount) box.append(reactions);
+
+    const actions = node("div", "message-actions");
+    const replyButton = node("button", "message-action", "Ответить");
+    replyButton.type = "button";
+    replyButton.addEventListener("click", () => {
+      state.replyToMessageId = message.id;
+      $("message-input").placeholder = "Ответ на сообщение…";
+      $("message-input").focus();
+      toast("Ответ на сообщение #" + message.id);
+    });
+    actions.append(replyButton);
+
+    const reactButton = node("button", "message-action", "Реакция");
+    reactButton.type = "button";
+    reactButton.addEventListener("click", async () => {
+      const emoji = prompt("Введи эмодзи для реакции:");
+      if (!emoji) return;
+      try {
+        await api("/chats/" + encodeURIComponent(message.chat_id) + "/messages/" +
+          encodeURIComponent(message.id) + "/reactions", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ emoji })
+          });
+        if (state.chat?.id === message.chat_id) await loadMessages(message.chat_id);
+      } catch (error) { toast(translateError(error.message)); }
+    });
+    actions.append(reactButton);
+
+    if (message.is_mine) {
+      const editButton = node("button", "message-action", "Изменить");
+      editButton.type = "button";
+      editButton.addEventListener("click", async () => {
+        const text = prompt("Измени сообщение:", message.body || "");
+        if (text === null || !text.trim()) return;
+        try {
+          await api("/chats/" + encodeURIComponent(message.chat_id) + "/messages/" +
+            encodeURIComponent(message.id), {
+              method: "PATCH", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text, reply_to_message_id: state.replyToMessageId || 0 })
+            });
+          await loadMessages(message.chat_id);
+        } catch (error) { toast(translateError(error.message)); }
+      });
+      actions.append(editButton);
+
+      const deleteButton = node("button", "message-action danger", "Удалить");
+      deleteButton.type = "button";
+      deleteButton.addEventListener("click", async () => {
+        if (!confirm("Удалить это сообщение?")) return;
+        try {
+          await api("/chats/" + encodeURIComponent(message.chat_id) + "/messages/" +
+            encodeURIComponent(message.id), { method: "DELETE" });
+          await loadMessages(message.chat_id);
+        } catch (error) { toast(translateError(error.message)); }
+      });
+      actions.append(deleteButton);
+    }
+    box.append(actions);
+
     const date = new Date(message.created_at);
     box.append(node("time", "", Number.isNaN(date.getTime())
       ? "" : date.toLocaleString("ru-RU", { hour: "2-digit", minute: "2-digit" })));
@@ -387,6 +470,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text })
       });
+      state.replyToMessageId = 0;
+      input.placeholder = "Написать сообщение…";
       if (state.chat?.id === chatId) await loadMessages(chatId);
       await loadChats();
     } catch (error) {
@@ -510,7 +595,7 @@
         let message;
         try { message = JSON.parse(event.data); } catch { return; }
         if (message.chat_id && state.chat && message.chat_id === state.chat.id &&
-          ["message.created", "message.deleted", "chat.read", "poll.created", "poll.updated", "poll.closed"].includes(message.type)) {
+          ["message.created", "message.edited", "message.deleted", "message.reactions_updated", "chat.read", "poll.created", "poll.updated", "poll.closed"].includes(message.type)) {
           loadMessages(state.chat.id).catch(() => {});
           loadChats().catch(() => {});
         }
