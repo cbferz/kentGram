@@ -1,6 +1,5 @@
 (() => {
   "use strict";
-
   const API = "https://api.kentgram.tendercheck.pro/api/v1";
   const WS = "wss://api.kentgram.tendercheck.pro/api/v1/realtime";
   const $ = (id) => document.getElementById(id);
@@ -226,19 +225,57 @@
     }
     if (message.media_id && message.media_url) {
       const url = API + message.media_url;
+
       if ((message.media_mime || "").startsWith("image/")) {
+        const media = node("div", "message-media message-media-image");
+        const placeholder = node("div", "media-placeholder", "Загрузка изображения…");
         const img = node("img");
         img.alt = message.media_name || "Изображение";
         img.loading = "lazy";
         img.decoding = "async";
-        box.append(img);
-        protectedFetch(url).then((response) => response.blob()).then((blob) => {
-          if (!img.isConnected) return;
-          const objectURL = URL.createObjectURL(blob);
-          img.src = objectURL;
-          img.addEventListener("load", () => URL.revokeObjectURL(objectURL), { once: true });
-          img.addEventListener("error", () => URL.revokeObjectURL(objectURL), { once: true });
-        }).catch(() => { img.alt = "Не удалось загрузить изображение"; });
+
+        media.append(placeholder, img);
+        box.append(media);
+
+        let objectURL = null;
+
+        const showError = () => {
+          if (objectURL) {
+            URL.revokeObjectURL(objectURL);
+            objectURL = null;
+          }
+          img.remove();
+          placeholder.classList.add("media-error");
+          placeholder.textContent = "Не удалось загрузить изображение";
+        };
+
+        protectedFetch(url)
+          .then(async (response) => {
+            const blob = await response.blob();
+            if (!blob.size || !blob.type.startsWith("image/")) {
+              throw new Error("invalid_image");
+            }
+            return blob;
+          })
+          .then((blob) => {
+            if (!media.isConnected) return;
+            objectURL = URL.createObjectURL(blob);
+
+            img.addEventListener("load", () => {
+              placeholder.remove();
+              media.classList.add("media-loaded");
+              if (objectURL) {
+                URL.revokeObjectURL(objectURL);
+                objectURL = null;
+              }
+            }, { once: true });
+
+            img.addEventListener("error", showError, { once: true });
+            img.src = objectURL;
+          })
+          .catch(() => {
+            if (media.isConnected) showError();
+          });
       } else {
         const link = node("a", "body", message.media_name || "Скачать вложение");
         link.href = "#";
@@ -489,9 +526,44 @@
     }
   }
 
-  $("refresh-chats").addEventListener("click", () => loadChats().catch((error) => toast(translateError(error.message))));
-  $("chat-reload").addEventListener("click", () => {
-    if (state.chat) loadMessages(state.chat.id).catch((error) => toast(translateError(error.message)));
+
+
+
+
+  // Автоматическая синхронизация веб-клиента.
+  let autoSyncBusy = false;
+  let lastChatsSync = 0;
+
+  async function autoSync() {
+    if (!state.access || state.stopped || document.hidden || autoSyncBusy) return;
+
+    autoSyncBusy = true;
+    try {
+      const now = Date.now();
+
+      if (now - lastChatsSync >= 10000) {
+        await loadChats();
+        lastChatsSync = now;
+      }
+
+      if (state.chat && !document.hidden && !state.stopped) {
+        await loadMessages(state.chat.id);
+      }
+    } catch (error) {
+      // Временная потеря сети не должна прерывать автоматическую синхронизацию.
+      console.debug("kentGram auto-sync:", error.message);
+    } finally {
+      autoSyncBusy = false;
+    }
+  }
+
+  const autoSyncTimer = setInterval(autoSync, 5000);
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      lastChatsSync = 0;
+      autoSync();
+    }
   });
 
   $("logout-button").addEventListener("click", async () => {
