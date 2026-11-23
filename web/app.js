@@ -8,7 +8,9 @@
     access: sessionStorage.getItem("kg_access") || "",
     refresh: sessionStorage.getItem("kg_refresh") || "",
     me: null, chats: [], chat: null, socket: null, socketTimer: 0,
-    socketDelay: 1000, authMode: "login", searchTimer: 0, toastTimer: 0,
+    socketDelay: 1000, socketConnecting: false, socketGeneration: 0,
+    socketCursor: Number(localStorage.getItem("kg_realtime_cursor") || "0"),
+    authMode: "login", searchTimer: 0, toastTimer: 0,
     refreshing: null, booting: false, stopped: false, messageRequest: 0
   };
   const MAX_FILE = 20 * 1024 * 1024;
@@ -189,6 +191,7 @@
   async function loadChats() {
     const data = await api("/chats");
     state.chats = Array.isArray(data.chats) ? data.chats : [];
+    if (state.chat) state.chat = state.chats.find((item) => item.id === state.chat.id) || state.chat;
     const list = $("chat-list");
     list.replaceChildren();
     if (!state.chats.length) {
@@ -436,18 +439,20 @@
   }
 
   function stopSocket() {
+    state.socketGeneration++;
+    state.socketConnecting = false;
     clearTimeout(state.socketTimer);
     state.socketTimer = 0;
     if (state.socket) {
       const socket = state.socket;
       state.socket = null;
       socket.onclose = null;
-      socket.close();
+      socket.close(1000, "client stopped");
     }
   }
 
   function scheduleSocketReconnect() {
-    if (state.stopped || !state.access || !state.chat || state.socketTimer) return;
+    if (state.stopped || !state.access || state.socketTimer) return;
     const delay = state.socketDelay;
     state.socketDelay = Math.min(state.socketDelay * 2, 30000);
     state.socketTimer = setTimeout(() => {
@@ -456,35 +461,93 @@
     }, delay);
   }
 
-  function connectSocket() {
-    if (!state.access || !state.chat || !window.WebSocket || state.stopped) return;
-    if (state.socket && (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)) return;
+  async function connectSocket() {
+    if (!state.access || !window.WebSocket || state.stopped ||
+        state.socketConnecting || (state.socket &&
+        (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING))) return;
+
+    state.socketConnecting = true;
+    const generation = state.socketGeneration;
     try {
-      const socket = new WebSocket(WS, ["kentgram", "bearer." + state.access]);
+      // Browser WebSocket APIs cannot set Authorization headers. Obtain a
+      // single-purpose, 30-second ticket over the authenticated REST channel.
+      const ticketData = await api("/realtime/ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      if (state.stopped || generation !== state.socketGeneration) return;
+      if (!ticketData.ticket) throw new Error("realtime_ticket_failed");
+
+      const url = WS + "?ticket=" + encodeURIComponent(ticketData.ticket) +
+        "&since=" + encodeURIComponent(String(state.socketCursor));
+      const socket = new WebSocket(url);
       state.socket = socket;
+
       socket.onopen = () => {
-        if (state.socket !== socket) return;
+        if (state.socket !== socket || generation !== state.socketGeneration) return;
+        state.socketConnecting = false;
         state.socketDelay = 1000;
-        for (const chat of state.chats) {
-          socket.send(JSON.stringify({ type: "presence.subscribe", chat_id: chat.id }));
-        }
       };
+
       socket.onmessage = (event) => {
-        let message;
-        try { message = JSON.parse(event.data); } catch { return; }
-        if (message.chat_id && state.chat && message.chat_id === state.chat.id &&
-          ["message.created", "message.deleted", "chat.read", "poll.created", "poll.updated", "poll.closed"].includes(message.type)) {
+        let batch;
+        try { batch = JSON.parse(event.data); } catch { return; }
+        if (batch.type !== "sync.batch") return;
+
+        const cursor = Number(batch.cursor);
+        if (Number.isSafeInteger(cursor) && cursor >= 0) {
+          state.socketCursor = cursor;
+          localStorage.setItem("kg_realtime_cursor", String(cursor));
+        }
+
+        const events = Array.isArray(batch.events) ? batch.events : [];
+        if (!events.length) return;
+        let chatListChanged = false;
+        let activeChatChanged = false;
+        const activeId = state.chat?.id;
+
+        for (const item of events) {
+          if (!item || typeof item.type !== "string") continue;
+          if (["chat.created", "message.created", "message.deleted"].includes(item.type)) {
+            chatListChanged = true;
+          }
+          if (activeId && Number(item.chat_id) === Number(activeId) &&
+              ["message.created", "message.deleted", "message.edited", "message.reaction"].includes(item.type)) {
+            activeChatChanged = true;
+          }
+        }
+
+        if (activeChatChanged && state.chat) {
           loadMessages(state.chat.id).catch(() => {});
+        }
+        if (chatListChanged) {
           loadChats().catch(() => {});
         }
       };
+
       socket.onerror = () => socket.close();
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (state.socket === socket) state.socket = null;
+        if (generation !== state.socketGeneration) return;
+        state.socketConnecting = false;
+        if (event.code === 1008) {
+          clearTokens();
+          state.me = null;
+          showAuth("Сеанс завершён. Войди снова.");
+          return;
+        }
         scheduleSocketReconnect();
       };
-    } catch {
-      state.socket = null;
+    } catch (error) {
+      if (generation !== state.socketGeneration) return;
+      state.socketConnecting = false;
+      if (error.status === 401 || error.message === "session_expired") {
+        clearTokens();
+        state.me = null;
+        showAuth("Сеанс завершён. Войди снова.");
+        return;
+      }
       scheduleSocketReconnect();
     }
   }
@@ -598,7 +661,7 @@
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && state.access && state.chat) connectSocket();
+    if (document.visibilityState === "visible" && state.access) connectSocket();
   });
 
   if (state.access && state.refresh) boot();
