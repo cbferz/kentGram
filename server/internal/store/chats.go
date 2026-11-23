@@ -129,8 +129,11 @@ func (s *Store) SendChatMessage(ctx context.Context, chatID,senderID int64,body 
 // are scoped in the UPDATE, so a message ID from another chat cannot be used.
 func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, senderID int64) error {
 	tx, err := s.Pool.Begin(ctx)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer tx.Rollback(ctx)
+
 	var deletedAt time.Time
 	err = tx.QueryRow(ctx, `UPDATE messages
 		SET deleted_at = NOW()
@@ -138,10 +141,36 @@ func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, sender
 		  AND deleted_at IS NULL
 		  AND EXISTS (SELECT 1 FROM chat_members WHERE chat_id = $2 AND user_id = $3)
 		RETURNING deleted_at`, messageID, chatID, senderID).Scan(&deletedAt)
-	if errors.Is(err, pgx.ErrNoRows) { return ErrNotFound }
-	if err != nil { return err }
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Preserve idempotency without exposing whether another user's or
+		// another chat's message exists. A repeat succeeds only for the
+		// original sender, in the original chat, while still a member.
+		var alreadyDeleted bool
+		checkErr := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM messages m
+				WHERE m.id = $1 AND m.chat_id = $2 AND m.sender_id = $3
+				  AND m.deleted_at IS NOT NULL
+				  AND EXISTS (
+					SELECT 1 FROM chat_members cm
+					WHERE cm.chat_id = $2 AND cm.user_id = $3
+				  )
+			)`, messageID, chatID, senderID).Scan(&alreadyDeleted)
+		if checkErr != nil {
+			return checkErr
+		}
+		if alreadyDeleted {
+			return nil
+		}
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
 	if err := insertRealtimeEvent(ctx, tx, chatID, senderID, "message.deleted", map[string]any{
 		"chat_id": chatID, "message_id": messageID, "deleted_at": deletedAt,
-	}); err != nil { return err }
+	}); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
