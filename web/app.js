@@ -979,7 +979,8 @@
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           display_name: $("profile-display-name").value.trim(),
-          bio: $("profile-bio").value.trim()
+          bio: $("profile-bio").value.trim(),
+          avatar_url: state.me?.avatar_url || ""
         })
       });
       showApp();
