@@ -84,6 +84,8 @@ func (a *API) Routes() http.Handler {
 			r.Post("/chats/{chatID}/leave", a.leaveCommunityChat)
 			r.Post("/chats/{chatID}/transfer-ownership", a.transferCommunityOwnership)
 			r.Get("/chats/{chatID}/messages", a.listChatMessages)
+		r.Patch("/chats/{chatID}/messages/{messageID}", a.editChatMessage)
+		r.Post("/chats/{chatID}/messages/{messageID}/reactions", a.toggleMessageReaction)
 			r.Post("/chats/{chatID}/messages/{messageID}/forward", a.forwardChatMessage)
 			r.Get("/chats/{chatID}/pin", a.getPinnedChatMessage)
 			r.Post("/chats/{chatID}/pin", a.pinChatMessage)
