@@ -8,7 +8,8 @@
     refresh: sessionStorage.getItem("kg_refresh") || "",
     me: null, chats: [], chat: null, replyToMessageId: 0, socket: null, socketTimer: 0,
     socketDelay: 1000, authMode: "login", searchTimer: 0, toastTimer: 0,
-    refreshing: null, booting: false, stopped: false, messageRequest: 0
+    refreshing: null, booting: false, stopped: false, messageRequest: 0,
+    realtimeCursor: 0, realtimeSyncing: false
   };
   const MAX_FILE = 20 * 1024 * 1024;
   const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "application/pdf"]);
@@ -167,6 +168,7 @@
       });
       saveTokens(data);
       state.me = data.user || await api("/me");
+      state.realtimeCursor = Number(sessionStorage.getItem("kg_realtime_cursor_" + state.me.id) || 0);
       await boot();
     } catch (error) {
       $("auth-notice").textContent = translateError(error.message);
@@ -409,6 +411,103 @@
         body: JSON.stringify({ last_read_message_id: latest.id })
       }).catch(() => {});
     }
+    await loadPolls(chatId);
+  }
+
+  async function loadPolls(chatId) {
+    const data = await api("/chats/" + encodeURIComponent(chatId) + "/polls");
+    if (!state.chat || state.chat.id !== chatId) return;
+    const area = $("messages");
+    for (const poll of (Array.isArray(data.polls) ? data.polls : [])) {
+      const card = node("section", "poll-card");
+      const heading = node("div", "poll-heading");
+      heading.append(node("strong", "", poll.question));
+      heading.append(node("span", "poll-meta",
+        (poll.closed ? "Завершён · " : "") + (poll.total_votes || 0) + " голосов" +
+        (poll.anonymous ? " · анонимно" : "")));
+      card.append(heading);
+
+      const choices = node("div", "poll-options");
+      const controls = [];
+      for (const option of (poll.options || [])) {
+        const label = node("label", "poll-option");
+        const control = document.createElement("input");
+        control.type = poll.multiple_choice ? "checkbox" : "radio";
+        control.name = "poll-" + poll.id;
+        control.value = String(option.id);
+        control.checked = !!option.selected;
+        control.disabled = !!poll.closed;
+        const copy = node("span", "poll-option-copy");
+        copy.append(node("span", "poll-option-text", option.text));
+        copy.append(node("span", "poll-option-votes", String(option.votes || 0)));
+        label.append(control, copy);
+        choices.append(label);
+        controls.push(control);
+      }
+      card.append(choices);
+
+      const footer = node("div", "poll-footer");
+      const vote = node("button", "secondary poll-vote", poll.closed ? "Опрос завершён" : "Голосовать");
+      vote.type = "button";
+      vote.disabled = !!poll.closed;
+      vote.addEventListener("click", async () => {
+        const optionIds = controls.filter(control => control.checked).map(control => Number(control.value));
+        if (!optionIds.length) { toast("Выбери вариант ответа"); return; }
+        vote.disabled = true;
+        try {
+          await api("/chats/" + encodeURIComponent(chatId) + "/polls/" +
+            encodeURIComponent(poll.id) + "/vote", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ option_ids: optionIds })
+            });
+          await loadMessages(chatId);
+        } catch (error) {
+          vote.disabled = false;
+          toast(translateError(error.message));
+        }
+      });
+      footer.append(vote);
+
+      if (!poll.closed && (Number(poll.creator_id) === Number(state.me?.id) ||
+          ["owner", "admin"].includes(state.chat.role))) {
+        const close = node("button", "message-action danger", "Завершить");
+        close.type = "button";
+        close.addEventListener("click", async () => {
+          try {
+            await api("/chats/" + encodeURIComponent(chatId) + "/polls/" +
+              encodeURIComponent(poll.id) + "/close", { method: "POST" });
+            await loadMessages(chatId);
+          } catch (error) { toast(translateError(error.message)); }
+        });
+        footer.append(close);
+      }
+      card.append(footer);
+      area.append(card);
+    }
+  }
+
+  async function createPoll() {
+    if (!state.chat) return;
+    const question = prompt("Вопрос опроса:");
+    if (!question || !question.trim()) return;
+    const rawOptions = prompt("Варианты ответа через символ | (минимум два):");
+    if (!rawOptions) return;
+    const options = rawOptions.split("|").map(value => value.trim()).filter(Boolean);
+    if (options.length < 2 || options.length > 10) {
+      toast("Нужно от 2 до 10 вариантов");
+      return;
+    }
+    try {
+      await api("/chats/" + encodeURIComponent(state.chat.id) + "/polls", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: question.trim(), options,
+          multiple_choice: confirm("Разрешить выбирать несколько вариантов?"),
+          anonymous: confirm("Сделать опрос анонимным?")
+        })
+      });
+      await loadMessages(state.chat.id);
+    } catch (error) { toast(translateError(error.message)); }
   }
 
   async function openChat(id) {
@@ -457,6 +556,8 @@
       $("composer").requestSubmit();
     }
   });
+
+  $("create-poll-button").addEventListener("click", createPoll);
 
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -591,6 +692,7 @@
       socket.onopen = () => {
         if (state.socket !== socket) return;
         state.socketDelay = 1000;
+        syncRealtimeEvents();
         for (const chat of state.chats) {
           socket.send(JSON.stringify({ type: "presence.subscribe", chat_id: chat.id }));
         }
@@ -619,6 +721,35 @@
 
 
 
+  async function syncRealtimeEvents() {
+    if (!state.access || state.stopped || state.realtimeSyncing) return;
+    state.realtimeSyncing = true;
+    try {
+      const data = await api("/realtime/events?since=" + encodeURIComponent(state.realtimeCursor));
+      const events = Array.isArray(data.events) ? data.events : [];
+      let refreshChats = false;
+      let refreshCurrentChat = false;
+      for (const event of events) {
+        const cursor = Number(event.id || 0);
+        if (cursor > state.realtimeCursor) state.realtimeCursor = cursor;
+        const chatId = Number(event.chat_id || 0);
+        if (chatId && state.chat?.id === chatId) refreshCurrentChat = true;
+        if (["chat.created", "message.created", "message.edited", "message.deleted",
+          "message.reactions_updated", "chat.read", "chat.pinned", "chat.unpinned",
+          "poll.created", "poll.updated", "poll.closed"].includes(event.type)) refreshChats = true;
+      }
+      const highWater = Number(data.cursor || data.high_water || 0);
+      if (highWater > state.realtimeCursor) state.realtimeCursor = highWater;
+      sessionStorage.setItem("kg_realtime_cursor_" + state.me.id, String(state.realtimeCursor));
+      if (refreshCurrentChat && state.chat) await loadMessages(state.chat.id);
+      if (refreshChats) await loadChats();
+    } catch (error) {
+      console.debug("kentGram realtime recovery:", error.message);
+    } finally {
+      state.realtimeSyncing = false;
+    }
+  }
+
   // Автоматическая синхронизация веб-клиента.
   let autoSyncBusy = false;
   let lastChatsSync = 0;
@@ -629,6 +760,7 @@
     autoSyncBusy = true;
     try {
       const now = Date.now();
+      await syncRealtimeEvents();
 
       if (now - lastChatsSync >= 10000) {
         await loadChats();

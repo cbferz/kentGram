@@ -53,20 +53,20 @@ type ChatMessage struct {
 }
 
 func (s *Store) CreateDirectChat(ctx context.Context, me, peer int64) (int64, error) {
-    tx, err := s.Pool.Begin(ctx)
-    if err != nil { return 0, err }
-    defer tx.Rollback(ctx)
-    var id int64
-    err = tx.QueryRow(ctx, `SELECT c.id FROM chats c
-        JOIN chat_members a ON a.chat_id=c.id AND a.user_id=$1
-        JOIN chat_members b ON b.chat_id=c.id AND b.user_id=$2
-        WHERE c.kind='direct'
-        LIMIT 1`, me, peer).Scan(&id)
-    if err == nil { return id, tx.Commit(ctx) }
-    if !errors.Is(err, pgx.ErrNoRows) { return 0, err }
-    if err := tx.QueryRow(ctx, `INSERT INTO chats(kind) VALUES('direct') RETURNING id`).Scan(&id); err != nil { return 0, err }
-    if _, err := tx.Exec(ctx, `INSERT INTO chat_members(chat_id,user_id) VALUES($1,$2),($1,$3)`, id, me, peer); err != nil { return 0, err }
-    return id, tx.Commit(ctx)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return 0, err }
+	defer tx.Rollback(ctx)
+	var id int64
+	err = tx.QueryRow(ctx, `SELECT c.id FROM chats c
+		JOIN chat_members a ON a.chat_id=c.id AND a.user_id=$1
+		JOIN chat_members b ON b.chat_id=c.id AND b.user_id=$2
+		WHERE c.kind='direct' LIMIT 1`, me, peer).Scan(&id)
+	if err == nil { return id, tx.Commit(ctx) }
+	if !errors.Is(err, pgx.ErrNoRows) { return 0, err }
+	if err := tx.QueryRow(ctx, `INSERT INTO chats(kind) VALUES('direct') RETURNING id`).Scan(&id); err != nil { return 0, err }
+	if _, err := tx.Exec(ctx, `INSERT INTO chat_members(chat_id,user_id) VALUES($1,$2),($1,$3)`, id, me, peer); err != nil { return 0, err }
+	if err := insertRealtimeEvent(ctx, tx, id, me, "chat.created", map[string]any{"chat_id": id}); err != nil { return 0, err }
+	return id, tx.Commit(ctx)
 }
 
 func (s *Store) ListChats(ctx context.Context, me int64) ([]ChatSummary, error) {
@@ -142,61 +142,70 @@ func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int
     return out,nil
 }
 
-func (s *Store) SendChatMessage(ctx context.Context, chatID,senderID int64,body string, replyToID int64)(ChatMessage,error) {
-    var m ChatMessage
-    err:=s.Pool.QueryRow(ctx,`INSERT INTO messages(chat_id,sender_id,body,reply_to_message_id)
-        SELECT $1,$2,$3,CASE WHEN $4=0 THEN NULL ELSE $4 END
-        WHERE EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2)
-          AND EXISTS(SELECT 1 FROM chats c WHERE c.id=$1 AND
-              (c.kind <> 'channel' OR EXISTS(
-                  SELECT 1 FROM chat_members permission
-                  WHERE permission.chat_id=c.id AND permission.user_id=$2
-                    AND permission.role IN ('owner','admin')
-              )))
-          AND ($4=0 OR EXISTS(SELECT 1 FROM messages WHERE id=$4 AND chat_id=$1 AND deleted_at IS NULL))
-        RETURNING id,chat_id,sender_id,body,created_at`,chatID,senderID,body,replyToID).
-        Scan(&m.ID,&m.ChatID,&m.SenderID,&m.Body,&m.CreatedAt)
-    if err!=nil{return m,norm(err)}
-    m.IsMine=true
-    if _,err=s.Pool.Exec(ctx,`UPDATE chats SET updated_at=NOW() WHERE id=$1`,chatID);err!=nil{return m,err}
-    if err=s.Pool.QueryRow(ctx,`SELECT username FROM users WHERE id=$1`,senderID).Scan(&m.SenderUsername);err!=nil{return m,err}
-    return m,nil
-}
+func (s *Store) SendChatMessage(ctx context.Context, chatID, senderID int64, body string, replyToID int64) (ChatMessage, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return ChatMessage{}, err }
+	defer tx.Rollback(ctx)
 
+	var m ChatMessage
+	err = tx.QueryRow(ctx, `INSERT INTO messages(chat_id,sender_id,body,reply_to_message_id)
+		SELECT $1,$2,$3,CASE WHEN $4=0 THEN NULL ELSE $4 END
+		WHERE EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2)
+		  AND EXISTS(SELECT 1 FROM chats c WHERE c.id=$1 AND
+		      (c.kind <> 'channel' OR EXISTS(
+		          SELECT 1 FROM chat_members permission
+		          WHERE permission.chat_id=c.id AND permission.user_id=$2
+		            AND permission.role IN ('owner','admin')
+		      )))
+		  AND ($4=0 OR EXISTS(SELECT 1 FROM messages WHERE id=$4 AND chat_id=$1 AND deleted_at IS NULL))
+		RETURNING id,chat_id,sender_id,body,created_at`, chatID, senderID, body, replyToID).
+		Scan(&m.ID, &m.ChatID, &m.SenderID, &m.Body, &m.CreatedAt)
+	if err != nil { return m, norm(err) }
+	m.IsMine = true
+	if replyToID > 0 { m.ReplyToMessageID = &replyToID }
+	if _, err = tx.Exec(ctx, `UPDATE chats SET updated_at=NOW() WHERE id=$1`, chatID); err != nil { return m, err }
+	if err = tx.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, senderID).Scan(&m.SenderUsername); err != nil { return m, err }
+	if err = insertRealtimeEvent(ctx, tx, chatID, senderID, "message.created", m); err != nil { return m, err }
+	if err = tx.Commit(ctx); err != nil { return m, err }
+	return m, nil
+}
 
 // DeleteChatMessage soft-deletes only messages sent by a current chat member.
 // Both IDs are scoped in the UPDATE to prevent cross-chat message mutations.
 func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, senderID int64) (string, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return "", err }
+	defer tx.Rollback(ctx)
+
 	var storageName string
-	err := s.Pool.QueryRow(ctx, `UPDATE messages AS m
+	err = tx.QueryRow(ctx, `UPDATE messages AS m
 		SET deleted_at = NOW()
-		WHERE m.id = $1 AND m.chat_id = $2 AND m.sender_id = $3
+		WHERE m.id=$1 AND m.chat_id=$2 AND m.sender_id=$3
 		  AND m.deleted_at IS NULL
-		  AND EXISTS (SELECT 1 FROM chat_members WHERE chat_id = $2 AND user_id = $3)
+		  AND EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$2 AND user_id=$3)
 		RETURNING COALESCE((
 			SELECT cm.storage_name FROM chat_media cm
 			WHERE cm.media_id=m.media_id AND cm.chat_id=m.chat_id
 		),'')`, messageID, chatID, senderID).Scan(&storageName)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var alreadyDeleted bool
-		checkErr := s.Pool.QueryRow(ctx, `SELECT EXISTS(
+		checkErr := tx.QueryRow(ctx, `SELECT EXISTS(
 			SELECT 1 FROM messages
 			WHERE id=$1 AND chat_id=$2 AND sender_id=$3 AND deleted_at IS NOT NULL
 			  AND EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$2 AND user_id=$3)
 		)`, messageID, chatID, senderID).Scan(&alreadyDeleted)
-		if checkErr != nil {
-			return "", checkErr
-		}
-		if alreadyDeleted {
-			return "", nil
-		}
+		if checkErr != nil { return "", checkErr }
+		if alreadyDeleted { return "", tx.Commit(ctx) }
 		return "", ErrNotFound
 	}
-	if err != nil {
+	if err != nil { return "", err }
+	if _, err := tx.Exec(ctx, `UPDATE chats SET pinned_message_id=NULL,pinned_by=NULL WHERE id=$1 AND pinned_message_id=$2`, chatID, messageID); err != nil {
 		return "", err
 	}
-	_, _ = s.Pool.Exec(ctx, `UPDATE chats SET pinned_message_id=NULL,pinned_by=NULL
-		WHERE id=$1 AND pinned_message_id=$2`, chatID, messageID)
+	if err := insertRealtimeEvent(ctx, tx, chatID, senderID, "message.deleted", map[string]any{
+		"chat_id": chatID, "message_id": messageID,
+	}); err != nil { return "", err }
+	if err := tx.Commit(ctx); err != nil { return "", err }
 	return storageName, nil
 }
 
@@ -218,13 +227,34 @@ func (s *Store) ChatMemberIDs(ctx context.Context, chatID int64) ([]int64, error
  // MarkChatRead advances the caller's read cursor only within a chat they
  // currently belong to. A client cannot acknowledge a message from another chat.
 func (s *Store) MarkChatRead(ctx context.Context, chatID, userID, lastReadMessageID int64) (int64, error) {
-	var cursor int64
-	err := s.Pool.QueryRow(ctx, `UPDATE chat_members cm
-		SET last_read_message_id=GREATEST(cm.last_read_message_id,
-			LEAST($3, COALESCE((SELECT max(id) FROM messages WHERE chat_id=$1 AND deleted_at IS NULL),0)))
-		WHERE cm.chat_id=$1 AND cm.user_id=$2
-		RETURNING last_read_message_id`, chatID, userID, lastReadMessageID).Scan(&cursor)
-	return cursor, norm(err)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return 0, err }
+	defer tx.Rollback(ctx)
+
+	var previous int64
+	if err := tx.QueryRow(ctx, `SELECT last_read_message_id FROM chat_members
+		WHERE chat_id=$1 AND user_id=$2 FOR UPDATE`, chatID, userID).Scan(&previous); err != nil {
+		return 0, norm(err)
+	}
+	var maxMessageID int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(id),0) FROM messages
+		WHERE chat_id=$1 AND deleted_at IS NULL`, chatID).Scan(&maxMessageID); err != nil {
+		return 0, err
+	}
+	next := lastReadMessageID
+	if next > maxMessageID { next = maxMessageID }
+	if next < previous { next = previous }
+	if next > previous {
+		if _, err := tx.Exec(ctx, `UPDATE chat_members SET last_read_message_id=$3
+			WHERE chat_id=$1 AND user_id=$2`, chatID, userID, next); err != nil {
+			return 0, err
+		}
+		if err := insertRealtimeEvent(ctx, tx, chatID, userID, "chat.read", map[string]any{
+			"chat_id": chatID, "user_id": userID, "message_id": next,
+		}); err != nil { return 0, err }
+	}
+	if err := tx.Commit(ctx); err != nil { return 0, err }
+	return next, nil
 }
 
 // ChatReadCursors returns the current read cursor for each member of a chat.
@@ -271,8 +301,11 @@ func (s *Store) ChatIDsForUser(ctx context.Context, userID int64) ([]int64, erro
  // retaining immutable source identifiers and a username snapshot. Both chat
  // memberships and destination channel posting permissions are checked in SQL.
 func (s *Store) ForwardChatMessage(ctx context.Context, sourceChatID, sourceMessageID, destinationChatID, senderID int64) (ChatMessage, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return ChatMessage{}, err }
+	defer tx.Rollback(ctx)
 	var m ChatMessage
-	err := s.Pool.QueryRow(ctx, `INSERT INTO messages(
+	err = tx.QueryRow(ctx, `INSERT INTO messages(
 		chat_id,sender_id,body,forwarded_from_chat_id,forwarded_from_message_id,forwarded_from_username
 	)
 	SELECT destination.id,$4,source.body,source.chat_id,source.id,source_user.username
@@ -288,32 +321,46 @@ func (s *Store) ForwardChatMessage(ctx context.Context, sourceChatID, sourceMess
 	).Scan(&m.ID,&m.ChatID,&m.SenderID,&m.Body,&m.CreatedAt,&m.ForwardedFromChatID,&m.ForwardedFromMessageID,&m.ForwardedFromUsername)
 	if err != nil { return m, norm(err) }
 	m.IsMine = true
-	if err = s.Pool.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, senderID).Scan(&m.SenderUsername); err != nil { return m, err }
-	if _, err = s.Pool.Exec(ctx, `UPDATE chats SET updated_at=NOW() WHERE id=$1`, destinationChatID); err != nil { return m, err }
+	if err = tx.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, senderID).Scan(&m.SenderUsername); err != nil { return m, err }
+	if _, err = tx.Exec(ctx, `UPDATE chats SET updated_at=NOW() WHERE id=$1`, destinationChatID); err != nil { return m, err }
+	if err = insertRealtimeEvent(ctx, tx, destinationChatID, senderID, "message.created", m); err != nil { return m, err }
+	if err = tx.Commit(ctx); err != nil { return m, err }
 	return m, nil
 }
 
 // PinChatMessage pins one message per chat. In community chats only owners and
 // admins may pin; either participant may pin in a direct conversation.
 func (s *Store) PinChatMessage(ctx context.Context, chatID, messageID, actorID int64) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE chats c SET pinned_message_id=$2,pinned_by=$3
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE chats c SET pinned_message_id=$2,pinned_by=$3
 		WHERE c.id=$1
 		  AND EXISTS(SELECT 1 FROM messages m WHERE m.id=$2 AND m.chat_id=c.id AND m.deleted_at IS NULL)
 		  AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id=c.id AND cm.user_id=$3
 		    AND (c.kind='direct' OR cm.role IN ('owner','admin')))`, chatID, messageID, actorID)
 	if err != nil { return err }
 	if tag.RowsAffected()==0 { return ErrNotFound }
-	return nil
+	if err := insertRealtimeEvent(ctx, tx, chatID, actorID, "chat.pinned", map[string]any{
+		"chat_id": chatID, "message_id": messageID,
+	}); err != nil { return err }
+	return tx.Commit(ctx)
 }
 
 func (s *Store) UnpinChatMessage(ctx context.Context, chatID, actorID int64) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE chats c SET pinned_message_id=NULL,pinned_by=NULL
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE chats c SET pinned_message_id=NULL,pinned_by=NULL
 		WHERE c.id=$1 AND c.pinned_message_id IS NOT NULL
 		  AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id=c.id AND cm.user_id=$2
 		    AND (c.kind='direct' OR cm.role IN ('owner','admin')))`, chatID, actorID)
 	if err != nil { return err }
 	if tag.RowsAffected()==0 { return ErrNotFound }
-	return nil
+	if err := insertRealtimeEvent(ctx, tx, chatID, actorID, "chat.unpinned", map[string]any{
+		"chat_id": chatID,
+	}); err != nil { return err }
+	return tx.Commit(ctx)
 }
 
 func (s *Store) PinnedChatMessage(ctx context.Context, chatID, viewerID int64) (ChatMessage, error) {

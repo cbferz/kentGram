@@ -14,28 +14,31 @@ type MessageReaction struct {
 }
 
 func (s *Store) EditChatMessage(ctx context.Context, chatID, messageID, senderID int64, body string) (ChatMessage, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return ChatMessage{}, err }
+	defer tx.Rollback(ctx)
+
 	var message ChatMessage
-	err := s.Pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE messages AS m
 		SET body=$4, edited_at=NOW()
 		WHERE m.id=$1 AND m.chat_id=$2 AND m.sender_id=$3
 		  AND m.deleted_at IS NULL
-		  AND EXISTS (
-		    SELECT 1 FROM chat_members cm
-		    WHERE cm.chat_id=$2 AND cm.user_id=$3
-		  )
+		  AND EXISTS (SELECT 1 FROM chat_members cm WHERE cm.chat_id=$2 AND cm.user_id=$3)
 		RETURNING m.id,m.chat_id,m.sender_id,m.body,m.created_at,m.edited_at
 	`, messageID, chatID, senderID, body).Scan(
 		&message.ID, &message.ChatID, &message.SenderID, &message.Body,
 		&message.CreatedAt, &message.EditedAt,
 	)
-	if err != nil {
-		return message, norm(err)
-	}
+	if err != nil { return message, norm(err) }
 	message.IsMine = true
-	if err := s.Pool.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, senderID).Scan(&message.SenderUsername); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT username FROM users WHERE id=$1`, senderID).Scan(&message.SenderUsername); err != nil {
 		return message, err
 	}
+	if err := insertRealtimeEvent(ctx, tx, chatID, senderID, "message.edited", map[string]any{
+		"chat_id": chatID, "message_id": messageID,
+	}); err != nil { return message, err }
+	if err := tx.Commit(ctx); err != nil { return message, err }
 	return message, nil
 }
 
@@ -103,6 +106,11 @@ func (s *Store) ToggleMessageReaction(ctx context.Context, chatID, messageID, us
 		reactions = append(reactions, reaction)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := insertRealtimeEvent(ctx, tx, chatID, userID, "message.reactions_updated", map[string]any{
+		"chat_id": chatID, "message_id": messageID,
+	}); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

@@ -43,6 +43,7 @@ public final class MainActivity extends Activity {
     private OkHttpClient realtimeHttp;
     private volatile WebSocket realtimeSocket;
     private volatile boolean realtimeConnecting=false, realtimeReconnectScheduled=false;
+    private volatile boolean realtimeSyncInFlight=false, refreshingAccessToken=false;
     private Runnable realtimeReconnectTask;
     private LinearLayout activeMessages, activeChatsList;
     private ScrollView activeHistory;
@@ -1808,6 +1809,7 @@ public final class MainActivity extends Activity {
                 realtimeConnecting=false;
                 realtimeSocket=socket;
                 realtimeReconnectScheduled=false;
+                syncRealtimeEvents();
                 sendRealtimePresenceSubscribe(currentChat);
             }
             @Override public void onMessage(WebSocket socket,String text){
@@ -1822,17 +1824,94 @@ public final class MainActivity extends Activity {
                 if(realtimeSocket==socket)realtimeSocket=null;
                 realtimeConnecting=false;
                 if(response!=null&&response.code()==401){
-                    runOnUiThread(()->{
-                        prefs.edit().clear().apply();
-                        token="";
-                        stopRealtime();
-                        showAuth();
-                        toast("Сессия завершена. Войдите снова.");
-                    });
+                    refreshRealtimeSession();
                 }else{
                     scheduleRealtimeReconnect();
                 }
             }
+        });
+    }
+
+    private void syncRealtimeEvents(){
+        if(token.isEmpty()||prefs==null||realtimeSyncInFlight)return;
+        realtimeSyncInFlight=true;
+        long since=prefs.getLong("realtime_cursor",0L);
+        requestMethod("GET","/realtime/events?since="+since,null,true,result->{
+            realtimeSyncInFlight=false;
+            JSONArray events=result.optJSONArray("events");
+            boolean changed=false;
+            if(events!=null){
+                for(int i=0;i<events.length();i++){
+                    JSONObject event=events.optJSONObject(i);
+                    if(event==null)continue;
+                    changed=true;
+                }
+            }
+            long cursor=Math.max(since,result.optLong("cursor",since));
+            prefs.edit().putLong("realtime_cursor",cursor).apply();
+            if(events!=null&&events.length()>=100){
+                uiHandler.post(this::syncRealtimeEvents);
+            }
+            if(changed){
+                cachedChats=null;
+                if(currentChat>0&&activeMessages!=null&&activeHistory!=null){
+                    refreshMessages(currentChat,activeMessages,activeHistory);
+                }else if(activeChatsList!=null){
+                    requestGet("/chats",fresh->{
+                        JSONArray chats=fresh.optJSONArray("chats");
+                        if(chats!=null){
+                            cachedChats=chats;
+                            if(activeChatsList!=null)renderChats(activeChatsList,chats);
+                        }
+                    });
+                }
+            }
+        },(error,status)->{
+            realtimeSyncInFlight=false;
+            if(status==401)refreshRealtimeSession();
+        });
+    }
+
+    private void refreshRealtimeSession(){
+        if(token.isEmpty()||prefs==null)return;
+        if(refreshingAccessToken)return;
+        String refreshToken=prefs.getString("refresh_token","");
+        if(refreshToken.isEmpty()){
+            expireLocalSession();
+            return;
+        }
+        refreshingAccessToken=true;
+        JSONObject body=new JSONObject();
+        try{body.put("refresh_token",refreshToken);}catch(JSONException ignored){}
+        requestMethod("POST","/auth/refresh",body,false,result->{
+            refreshingAccessToken=false;
+            String nextAccess=result.optString("access_token","");
+            String nextRefresh=result.optString("refresh_token",refreshToken);
+            if(nextAccess.isEmpty()){
+                expireLocalSession();
+                return;
+            }
+            token=nextAccess;
+            prefs.edit().putString("access_token",nextAccess)
+                    .putString("refresh_token",nextRefresh).apply();
+            ensureRealtimeConnected();
+        },(error,status)->{
+            refreshingAccessToken=false;
+            if(status==401||status==403){
+                expireLocalSession();
+            }else{
+                scheduleRealtimeReconnect();
+            }
+        });
+    }
+
+    private void expireLocalSession(){
+        runOnUiThread(()->{
+            if(prefs!=null)prefs.edit().clear().apply();
+            token="";
+            stopRealtime();
+            showAuth();
+            toast("Сессия завершена. Войдите снова.");
         });
     }
 
