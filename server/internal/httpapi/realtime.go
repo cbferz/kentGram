@@ -140,8 +140,10 @@ func (a *API) realtime(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := ws.WriteJSON(map[string]any{
 				"type": "sync.batch",
-				"cursor": next,
-				"high_water": highWater,
+				// Cursors are decimal strings so JavaScript clients never lose
+				// precision when PostgreSQL BIGINT values exceed 2^53-1.
+				"cursor": strconv.FormatInt(next, 10),
+				"high_water": strconv.FormatInt(highWater, 10),
 				"events": events,
 			}); err != nil {
 				return err
