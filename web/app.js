@@ -362,7 +362,7 @@
           await api("/chats/" + encodeURIComponent(message.chat_id) + "/messages/" +
             encodeURIComponent(message.id), {
               method: "PATCH", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ text, reply_to_message_id: state.replyToMessageId || 0 })
+              body: JSON.stringify({ text })
             });
           await loadMessages(message.chat_id);
         } catch (error) { toast(translateError(error.message)); }
