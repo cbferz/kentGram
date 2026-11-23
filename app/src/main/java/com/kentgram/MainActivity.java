@@ -1324,6 +1324,37 @@ public final class MainActivity extends Activity {
                 }
                 messageLine.addView(bubble,p);
                 row.addView(messageLine,new LinearLayout.LayoutParams(-1,-2));
+
+                String editedAt=m.optString("edited_at","");
+                if(!editedAt.isEmpty()){
+                    TextView edited=label("изменено",10,MUTED,false);
+                    edited.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
+                    row.addView(edited,new LinearLayout.LayoutParams(-1,-2));
+                }
+
+                JSONArray reactions=m.optJSONArray("reactions");
+                if(reactions!=null&&reactions.length()>0){
+                    LinearLayout reactionRow=new LinearLayout(this);
+                    reactionRow.setOrientation(LinearLayout.HORIZONTAL);
+                    reactionRow.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
+                    for(int reactionIndex=0;reactionIndex<reactions.length();reactionIndex++){
+                        JSONObject reaction=reactions.optJSONObject(reactionIndex);
+                        if(reaction==null)continue;
+                        String emoji=reaction.optString("emoji","");
+                        if(emoji.isEmpty())continue;
+                        TextView chip=label(emoji+" "+reaction.optLong("count",0),11,
+                                reaction.optBoolean("reacted")?Color.WHITE:TEXT,true);
+                        chip.setGravity(Gravity.CENTER);
+                        chip.setPadding(dp(9),dp(5),dp(9),dp(5));
+                        chip.setBackground(round(reaction.optBoolean("reacted")?0xFF315DA8:0xFF273142,16));
+                        LinearLayout.LayoutParams chipParams=new LinearLayout.LayoutParams(-2,-2);
+                        chipParams.setMargins(dp(2),dp(3),dp(2),dp(3));
+                        reactionRow.addView(chip,chipParams);
+                        chip.setOnClickListener(v->sendMessageReaction(id,messageId,emoji,messages,history));
+                    }
+                    if(reactionRow.getChildCount()>0)row.addView(reactionRow,new LinearLayout.LayoutParams(-1,-2));
+                }
+
                 if(mine&&activePeerID>0){
                     TextView receipt=label(messageId<=peerRead?"✓✓ Прочитано":"✓ Отправлено",10,
                             messageId<=peerRead?0xFF8FB4FF:MUTED,false);
