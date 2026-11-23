@@ -42,13 +42,29 @@ func TestRealtimeEventRecoveryIsDurableAndChatScoped(t *testing.T) {
 	reaction := call(t, h, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/messages/%d/reactions", chatID, messageID), bob.Access, map[string]string{"emoji": "🔥"})
 	expectStatus(t, reaction, http.StatusOK)
 
+	createdPoll := call(t, h, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/polls", chatID), alice.Access, map[string]any{
+		"question": "Realtime poll?", "options": []string{"Yes", "No"},
+	})
+	expectStatus(t, createdPoll, http.StatusCreated)
+	poll := asMap(t, createdPoll)
+	pollID := int64(poll["id"].(float64))
+	options := poll["options"].([]any)
+	optionID := int64(options[0].(map[string]any)["id"].(float64))
+	vote := call(t, h, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/polls/%d/vote", chatID, pollID), bob.Access, map[string]any{"option_ids": []int64{optionID}})
+	expectStatus(t, vote, http.StatusOK)
+	closedPoll := call(t, h, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/polls/%d/close", chatID, pollID), alice.Access, nil)
+	expectStatus(t, closedPoll, http.StatusOK)
+
 	bobSync := call(t, h, http.MethodGet, "/api/v1/realtime/events?since=0", bob.Access, nil)
 	expectStatus(t, bobSync, http.StatusOK)
 	bobInitialEvents := asMap(t, bobSync)["events"].([]any)
-	if len(bobInitialEvents) != 4 ||
+	if len(bobInitialEvents) != 7 ||
 		bobInitialEvents[2].(map[string]any)["type"] != "message.edited" ||
-		bobInitialEvents[3].(map[string]any)["type"] != "message.reactions_updated" {
-		t.Fatalf("chat member did not receive durable edit/reaction events: %s", bobSync.Body.String())
+		bobInitialEvents[3].(map[string]any)["type"] != "message.reactions_updated" ||
+		bobInitialEvents[4].(map[string]any)["type"] != "poll.created" ||
+		bobInitialEvents[5].(map[string]any)["type"] != "poll.updated" ||
+		bobInitialEvents[6].(map[string]any)["type"] != "poll.closed" {
+		t.Fatalf("chat member did not receive durable message and poll events: %s", bobSync.Body.String())
 	}
 
 	outsideSync := call(t, h, http.MethodGet, "/api/v1/realtime/events?since=0", outsider.Access, nil)
