@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
 )
+
+var ErrReactionLimit = errors.New("reaction_limit_reached")
 
 type MessageReaction struct {
 	Emoji string `json:"emoji"`
@@ -43,18 +46,14 @@ func (s *Store) ToggleMessageReaction(ctx context.Context, chatID, messageID, us
 	}
 	defer tx.Rollback(ctx)
 
-	var visible bool
+	var lockedMessageID int64
 	if err := tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM messages m
-			JOIN chat_members cm ON cm.chat_id=m.chat_id AND cm.user_id=$3
-			WHERE m.id=$1 AND m.chat_id=$2 AND m.deleted_at IS NULL
-		)
-	`, messageID, chatID, userID).Scan(&visible); err != nil {
-		return nil, err
-	}
-	if !visible {
-		return nil, ErrNotFound
+		SELECT m.id FROM messages m
+		JOIN chat_members cm ON cm.chat_id=m.chat_id AND cm.user_id=$3
+		WHERE m.id=$1 AND m.chat_id=$2 AND m.deleted_at IS NULL
+		FOR UPDATE OF m
+	`, messageID, chatID, userID).Scan(&lockedMessageID); err != nil {
+		return nil, norm(err)
 	}
 
 	tag, err := tx.Exec(ctx, `
@@ -65,6 +64,16 @@ func (s *Store) ToggleMessageReaction(ctx context.Context, chatID, messageID, us
 		return nil, err
 	}
 	if tag.RowsAffected() == 0 {
+		var currentCount int
+		if err := tx.QueryRow(ctx, `
+			SELECT COUNT(DISTINCT emoji) FROM message_reactions
+			WHERE message_id=$1 AND chat_id=$2 AND user_id=$3
+		`, messageID, chatID, userID).Scan(&currentCount); err != nil {
+			return nil, err
+		}
+		if currentCount >= 3 {
+			return nil, ErrReactionLimit
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO message_reactions(message_id,chat_id,user_id,emoji)
 			VALUES($1,$2,$3,$4)
