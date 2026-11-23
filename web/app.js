@@ -486,6 +486,104 @@
     }
   }
 
+  async function createCommunity() {
+    const kind = confirm("Создать канал? Нажми «Отмена» для создания группы.") ? "channel" : "group";
+    const title = prompt(kind === "channel" ? "Название канала:" : "Название группы:");
+    if (!title || !title.trim()) return;
+    const description = prompt("Описание (необязательно):") || "";
+    const isPublic = confirm("Сделать сообщество публичным?");
+    let username = "";
+    if (isPublic) {
+      username = (prompt("Публичный адрес без @:") || "").trim().replace(/^@/, "");
+      if (!username) return;
+    }
+    try {
+      const created = await api("/chats/community", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, title: title.trim(), description, is_public: isPublic, username })
+      });
+      await loadChats();
+      if (created.id) await openChat(Number(created.id));
+      toast(kind === "channel" ? "Канал создан" : "Группа создана");
+    } catch (error) { toast(translateError(error.message)); }
+  }
+
+  async function joinCommunity() {
+    const username = (prompt("Публичный адрес сообщества (без @):") || "").trim().replace(/^@/, "");
+    if (!username) return;
+    try {
+      const result = await api("/chats/join", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username })
+      });
+      await loadChats();
+      if (result.chat_id) await openChat(Number(result.chat_id));
+    } catch (error) { toast(translateError(error.message)); }
+  }
+
+  async function manageMembers() {
+    if (!state.chat || state.chat.kind === "direct") return;
+    const chatId = state.chat.id;
+    try {
+      const data = await api("/chats/" + encodeURIComponent(chatId) + "/members");
+      const members = Array.isArray(data.members) ? data.members : [];
+      const listing = members.map(member =>
+        "@" + member.username + " · " + (member.display_name || member.username) + " · " + member.role
+      ).join("\n");
+      const action = (prompt(
+        "Участники:\n" + (listing || "Пока никого") +
+        "\n\nДействие: add / remove / role / transfer / leave"
+      ) || "").trim().toLowerCase();
+      if (!action) return;
+
+      if (action === "leave") {
+        if (!confirm("Выйти из этого сообщества?")) return;
+        await api("/chats/" + encodeURIComponent(chatId) + "/leave", { method: "POST" });
+        closeChatView();
+        await loadChats();
+        return;
+      }
+
+      const username = (prompt("Username участника:") || "").trim().replace(/^@/, "");
+      if (!username) return;
+      const member = members.find(item => String(item.username).toLowerCase() === username.toLowerCase());
+      if (action === "add") {
+        const profile = await api("/users/" + encodeURIComponent(username));
+        await api("/chats/" + encodeURIComponent(chatId) + "/members", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: profile.id })
+        });
+      } else {
+        if (!member) { toast("Участник не найден в этом чате"); return; }
+        if (action === "remove") {
+          if (!confirm("Удалить @" + username + " из сообщества?")) return;
+          await api("/chats/" + encodeURIComponent(chatId) + "/members/" +
+            encodeURIComponent(member.user_id), { method: "DELETE" });
+        } else if (action === "role") {
+          const role = (prompt("Новая роль: admin или member") || "").trim().toLowerCase();
+          if (!["admin", "member"].includes(role)) return;
+          await api("/chats/" + encodeURIComponent(chatId) + "/members/" +
+            encodeURIComponent(member.user_id) + "/role", {
+              method: "PATCH", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ role })
+            });
+        } else if (action === "transfer") {
+          if (!confirm("Передать владение @" + username + "?")) return;
+          await api("/chats/" + encodeURIComponent(chatId) + "/transfer-ownership", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: member.user_id })
+          });
+        } else {
+          toast("Неизвестное действие");
+          return;
+        }
+      }
+      await loadChats();
+      if (state.chat?.id === chatId) await loadMessages(chatId);
+      toast("Изменения участников сохранены");
+    } catch (error) { toast(translateError(error.message)); }
+  }
+
   async function createPoll() {
     if (!state.chat) return;
     const question = prompt("Вопрос опроса:");
@@ -527,6 +625,7 @@
     $("chat-subtitle").textContent = chat.kind === "direct"
       ? "@" + chat.peer_username : (chat.member_count + " участников");
     $("chat-avatar").textContent = avatarText(chat);
+    $("manage-members-button").hidden = chat.kind === "direct";
     try {
       await loadMessages(id);
       await loadChats();
@@ -557,6 +656,9 @@
     }
   });
 
+  $("create-community-button").addEventListener("click", createCommunity);
+  $("join-community-button").addEventListener("click", joinCommunity);
+  $("manage-members-button").addEventListener("click", manageMembers);
   $("create-poll-button").addEventListener("click", createPoll);
 
   $("composer").addEventListener("submit", async (event) => {
