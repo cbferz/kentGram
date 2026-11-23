@@ -269,3 +269,13 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
 .poll-footer{display:flex;gap:8px;align-items:center;margin-top:12px}
 .poll-vote{min-width:130px}
 #create-poll-button{flex-shrink:0}
+
+/* Community controls */
+.list-heading-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.list-actions{display:flex;align-items:center;gap:4px}
+.list-actions .quiet-button{min-width:28px;padding:4px 7px;font-size:14px}
+#manage-members-button{flex-shrink:0}
+@media(max-width:640px){
+  #manage-members-button,#create-poll-button{padding:7px 8px;font-size:11px}
+  .chat-header .chat-title{min-width:0}
+}
