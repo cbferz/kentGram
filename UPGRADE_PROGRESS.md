@@ -23,6 +23,7 @@ Updated: 2026-11-23
 - PR #20 CI passed: Backend, Android signed APK and Web checks.
 - PR #21 CI passed: Go vet/tests/build, Android build/signature/publication, Web syntax/container/Nginx checks.
 - PR #22 CI passed: Backend tests/vet/build, Web syntax/container/Nginx checks, Android build/signature/publication. API paths and request/response shapes were reviewed before merge.
+- PR #23 CI is currently blocked before execution: repeated Backend, Android and Web jobs report `runner_id=0`, an empty runner name and no steps. The jobs did not reach source checkout, tests or builds; do not interpret these as code-level test failures or merge until CI can execute successfully.
 - Post-merge main Web and Android workflows passed. Main Backend workflow is still completing its post-merge integration test run; re-check before deployment.
 - Main Android workflow produced a signed APK. Package/applicationId and signing key were preserved.
 - Migration 0009 (durable realtime events) and migration 0010 (message edit/reactions) are additive; CI applies them on a clean PostgreSQL database.
