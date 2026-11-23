@@ -1,0 +1,4 @@
+services:
+  api:
+    environment:
+      PUBLIC_BASE_URL: https://api.kentgram.tendercheck.pro

@@ -1,0 +1,144 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+func dialRealtime(t *testing.T, serverURL, token string) *websocket.Conn {
+	t.Helper()
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+token)
+	url := "ws" + strings.TrimPrefix(serverURL, "http") + "/api/v1/realtime"
+	conn, response, err := websocket.DefaultDialer.Dial(url, header)
+	if err != nil {
+		if response != nil {
+			t.Fatalf("websocket dial failed: %v (HTTP %d)", err, response.StatusCode)
+		}
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+func TestRealtimeMessageAndTypingEvents(t *testing.T) {
+	api := newTestAPI(t)
+	handler := api.Routes()
+	owner := registerUser(t, handler)
+	peer := registerUser(t, handler)
+
+	created := call(t, handler, http.MethodPost, "/api/v1/chats/direct", owner.Access,
+		map[string]int64{"user_id": peer.ID})
+	expectStatus(t, created, http.StatusOK)
+	chatID := int64(asMap(t, created)["chat_id"].(float64))
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	ownerSocket := dialRealtime(t, server.URL, owner.Access)
+	peerSocket := dialRealtime(t, server.URL, peer.Access)
+
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, payload, err := ownerSocket.ReadMessage()
+	if err != nil {
+		t.Fatalf("read online presence event: %v", err)
+	}
+	var onlineEvent realtimeEvent
+	if err := json.Unmarshal(payload, &onlineEvent); err != nil {
+		t.Fatalf("decode online presence event: %v", err)
+	}
+	if onlineEvent.Type != "user.presence" || onlineEvent.ChatID != chatID ||
+		onlineEvent.UserID != peer.ID || !onlineEvent.Online {
+		t.Fatalf("unexpected online presence event: %+v", onlineEvent)
+	}
+	if err := ownerSocket.WriteJSON(map[string]any{"type": "presence.subscribe", "chat_id": chatID}); err != nil {
+		t.Fatalf("send presence subscription: %v", err)
+	}
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, payload, err = ownerSocket.ReadMessage()
+	if err != nil {
+		t.Fatalf("read presence snapshot: %v", err)
+	}
+	var snapshotEvent realtimeEvent
+	if err := json.Unmarshal(payload, &snapshotEvent); err != nil {
+		t.Fatalf("decode presence snapshot: %v", err)
+	}
+	if snapshotEvent.Type != "user.presence" || snapshotEvent.UserID != peer.ID || !snapshotEvent.Online {
+		t.Fatalf("unexpected presence snapshot: %+v", snapshotEvent)
+	}
+
+	sent := call(t, handler, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/messages", chatID), owner.Access,
+		map[string]string{"text": "realtime delivery"})
+	expectStatus(t, sent, http.StatusCreated)
+	messageID := int64(asMap(t, sent)["id"].(float64))
+
+	_ = peerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, payload, err = peerSocket.ReadMessage()
+	if err != nil {
+		t.Fatalf("read message event: %v", err)
+	}
+	var messageEvent realtimeEvent
+	if err := json.Unmarshal(payload, &messageEvent); err != nil {
+		t.Fatalf("decode message event: %v", err)
+	}
+	if messageEvent.Type != "message.created" || messageEvent.ChatID != chatID || messageEvent.MessageID != messageID {
+		t.Fatalf("unexpected message event: %+v", messageEvent)
+	}
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, _, err := ownerSocket.ReadMessage(); err != nil {
+		t.Fatalf("sender session did not receive its own message event: %v", err)
+	}
+
+	read := call(t, handler, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/read", chatID), peer.Access,
+		map[string]int64{"last_read_message_id": messageID})
+	expectStatus(t, read, http.StatusOK)
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, payload, err = ownerSocket.ReadMessage()
+	if err != nil {
+		t.Fatalf("read receipt event: %v", err)
+	}
+	var readEvent realtimeEvent
+	if err := json.Unmarshal(payload, &readEvent); err != nil {
+		t.Fatalf("decode read receipt event: %v", err)
+	}
+	if readEvent.Type != "chat.read" || readEvent.ChatID != chatID || readEvent.MessageID != messageID || readEvent.UserID != peer.ID {
+		t.Fatalf("unexpected read receipt event: %+v", readEvent)
+	}
+
+	if err := peerSocket.WriteJSON(map[string]any{"type": "typing", "chat_id": chatID}); err != nil {
+		t.Fatalf("send typing event: %v", err)
+	}
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, payload, err = ownerSocket.ReadMessage()
+	if err != nil {
+		t.Fatalf("read typing event: %v", err)
+	}
+	var typingEvent realtimeEvent
+	if err := json.Unmarshal(payload, &typingEvent); err != nil {
+		t.Fatalf("decode typing event: %v", err)
+	}
+	if typingEvent.Type != "typing" || typingEvent.ChatID != chatID || typingEvent.UserID != peer.ID {
+		t.Fatalf("unexpected typing event: %+v", typingEvent)
+	}
+
+	_ = peerSocket.Close()
+	_ = ownerSocket.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, payload, err = ownerSocket.ReadMessage()
+	if err != nil {
+		t.Fatalf("read offline presence event: %v", err)
+	}
+	var offlineEvent realtimeEvent
+	if err := json.Unmarshal(payload, &offlineEvent); err != nil {
+		t.Fatalf("decode offline presence event: %v", err)
+	}
+	if offlineEvent.Type != "user.presence" || offlineEvent.ChatID != chatID ||
+		offlineEvent.UserID != peer.ID || offlineEvent.Online {
+		t.Fatalf("unexpected offline presence event: %+v", offlineEvent)
+	}
+}

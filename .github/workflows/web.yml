@@ -1,0 +1,40 @@
+name: Web client checks
+
+on:
+  push:
+    branches: [main, feat/opengram-inspired-expansion, feat/kentgram-web-optimization]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+      - "docker-compose.yml"
+  pull_request:
+    branches: [main, feat/opengram-inspired-expansion]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+      - "docker-compose.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check JavaScript syntax
+        run: node --check web/app.js
+
+      - name: Build web container
+        run: docker build --pull -t kentgram-web:ci ./web
+
+      - name: Validate Nginx configuration
+        run: docker run --rm kentgram-web:ci nginx -t
