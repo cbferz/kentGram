@@ -128,7 +128,16 @@
     $("app").classList.remove("hidden");
     $("my-name").textContent = state.me.display_name || state.me.username;
     $("my-handle").textContent = "@" + state.me.username;
-    $("my-avatar").textContent = (state.me.display_name || state.me.username || "K").slice(0, 1).toUpperCase();
+    const avatar = $("my-avatar");
+    const avatarFallback = (state.me.display_name || state.me.username || "K").slice(0, 1).toUpperCase();
+    if (state.me.avatar_url) {
+      const image = document.createElement("img");
+      image.src = state.me.avatar_url;
+      image.alt = "Аватар";
+      avatar.replaceChildren(image);
+    } else {
+      avatar.textContent = avatarFallback;
+    }
   }
 
   function setAuthMode(mode) {
@@ -914,6 +923,8 @@
     $("app").classList.remove("chat-open");
     $("app").classList.add("settings-open");
     $("settings-panel").classList.remove("hidden");
+    $("profile-display-name").value = state.me?.display_name || "";
+    $("profile-bio").value = state.me?.bio || "";
     const box = $("web-sessions");
     box.replaceChildren(node("p", "muted", "Загружаем…"));
     try {
@@ -950,6 +961,35 @@
       box.replaceChildren(node("p", "notice", translateError(error.message)));
     }
   }
+
+  $("profile-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      state.me = await api("/me/profile", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          display_name: $("profile-display-name").value.trim(),
+          bio: $("profile-bio").value.trim()
+        })
+      });
+      showApp();
+      toast("Профиль сохранён");
+    } catch (error) { toast(translateError(error.message)); }
+  });
+
+  $("upload-avatar-button").addEventListener("click", async () => {
+    const file = $("profile-avatar-file").files?.[0];
+    if (!file) { toast("Выбери изображение"); return; }
+    if (file.size > 5 * 1024 * 1024) { toast("Аватар должен быть меньше 5 МБ"); return; }
+    const form = new FormData();
+    form.append("avatar", file);
+    try {
+      state.me = await api("/me/avatar", { method: "POST", body: form });
+      $("profile-avatar-file").value = "";
+      showApp();
+      toast("Аватар обновлён");
+    } catch (error) { toast(translateError(error.message)); }
+  });
 
   $("revoke-sessions").addEventListener("click", async () => {
     if (!confirm("Завершить все остальные сеансы?")) return;
