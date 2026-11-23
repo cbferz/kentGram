@@ -1866,7 +1866,10 @@ public final class MainActivity extends Activity {
                     });
                 }
             }
-        },(error,status)->realtimeSyncInFlight=false);
+        },(error,status)->{
+            realtimeSyncInFlight=false;
+            if(status==401)refreshRealtimeSession();
+        });
     }
 
     private void refreshRealtimeSession(){
