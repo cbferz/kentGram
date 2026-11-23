@@ -50,7 +50,7 @@ func TestRealtimeEventsAreDurableResumableAndChatScoped(t *testing.T) {
 	expectStatus(t, created, http.StatusOK)
 	chatID := int64(asMap(t, created)["chat_id"].(float64))
 
-	sent := call(t, h, http.MethodPost, "/api/v1/chats/"+itoa(chatID)+"/messages", alice.Access,
+	sent := call(t, h, http.MethodPost, "/api/v1/chats/"+realtimeTestID(chatID)+"/messages", alice.Access,
 		map[string]any{"text": "realtime test"})
 	expectStatus(t, sent, http.StatusCreated)
 	messageID := int64(asMap(t, sent)["id"].(float64))
@@ -78,7 +78,7 @@ func TestRealtimeEventsAreDurableResumableAndChatScoped(t *testing.T) {
 		t.Fatalf("non-member received chat events or failed to advance cursor: %+v %d %d", outsiderEvents, outsiderCursor, outsiderHigh)
 	}
 
-	deleted := call(t, h, http.MethodDelete, "/api/v1/chats/"+itoa(chatID)+"/messages/"+itoa(messageID), alice.Access, nil)
+	deleted := call(t, h, http.MethodDelete, "/api/v1/chats/"+realtimeTestID(chatID)+"/messages/"+realtimeTestID(messageID), alice.Access, nil)
 	expectStatus(t, deleted, http.StatusOK)
 	resumed, next, resumedHigh, err := a.db.RealtimeBatch(context.Background(), bob.ID, cursor, 100)
 	if err != nil {
@@ -89,6 +89,6 @@ func TestRealtimeEventsAreDurableResumableAndChatScoped(t *testing.T) {
 	}
 }
 
-func itoa(v int64) string {
+func realtimeTestID(v int64) string {
 	return strconv.FormatInt(v, 10)
 }
