@@ -37,10 +37,18 @@ func TestRealtimeEventRecoveryIsDurableAndChatScoped(t *testing.T) {
 		t.Fatalf("cursor did not reach high-water mark: cursor=%d high=%d", cursor, highWater)
 	}
 
+	edited := call(t, h, http.MethodPatch, fmt.Sprintf("/api/v1/chats/%d/messages/%d", chatID, messageID), alice.Access, map[string]string{"text": "edited durable message"})
+	expectStatus(t, edited, http.StatusOK)
+	reaction := call(t, h, http.MethodPost, fmt.Sprintf("/api/v1/chats/%d/messages/%d/reactions", chatID, messageID), bob.Access, map[string]string{"emoji": "🔥"})
+	expectStatus(t, reaction, http.StatusOK)
+
 	bobSync := call(t, h, http.MethodGet, "/api/v1/realtime/events?since=0", bob.Access, nil)
 	expectStatus(t, bobSync, http.StatusOK)
-	if len(asMap(t, bobSync)["events"].([]any)) != 2 {
-		t.Fatalf("chat member did not receive durable events: %s", bobSync.Body.String())
+	bobInitialEvents := asMap(t, bobSync)["events"].([]any)
+	if len(bobInitialEvents) != 4 ||
+		bobInitialEvents[2].(map[string]any)["type"] != "message.edited" ||
+		bobInitialEvents[3].(map[string]any)["type"] != "message.reactions_updated" {
+		t.Fatalf("chat member did not receive durable edit/reaction events: %s", bobSync.Body.String())
 	}
 
 	outsideSync := call(t, h, http.MethodGet, "/api/v1/realtime/events?since=0", outsider.Access, nil)
@@ -53,7 +61,8 @@ func TestRealtimeEventRecoveryIsDurableAndChatScoped(t *testing.T) {
 
 	deleted := call(t, h, http.MethodDelete, fmt.Sprintf("/api/v1/chats/%d/messages/%d", chatID, messageID), alice.Access, nil)
 	expectStatus(t, deleted, http.StatusOK)
-	resumed := call(t, h, http.MethodGet, fmt.Sprintf("/api/v1/realtime/events?since=%d", cursor), bob.Access, nil)
+	afterEditCursor := int64(asMap(t, bobSync)["cursor"].(float64))
+	resumed := call(t, h, http.MethodGet, fmt.Sprintf("/api/v1/realtime/events?since=%d", afterEditCursor), bob.Access, nil)
 	expectStatus(t, resumed, http.StatusOK)
 	resumedEvents := asMap(t, resumed)["events"].([]any)
 	if len(resumedEvents) != 1 || resumedEvents[0].(map[string]any)["type"] != "message.deleted" {
