@@ -42,7 +42,13 @@
       <div class="me-line"><div class="avatar" id="my-avatar">K</div><div class="me-copy"><strong id="my-name">Аккаунт</strong><span id="my-handle">@username</span></div><button class="quiet-button" id="logout-button">Выйти</button></div>
       <div class="search-wrap"><span aria-hidden="true">⌕</span><input id="people-search" placeholder="Найти человека" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Поиск людей"></div>
       <div id="search-results" class="search-results hidden"></div>
-      <div class="list-heading"><span>ТВОИ ЧАТЫ</span></div>
+      <div class="list-heading list-heading-actions">
+        <span>ТВОИ ЧАТЫ</span>
+        <div class="list-actions">
+          <button id="create-community-button" class="quiet-button" type="button" title="Создать группу или канал">＋</button>
+          <button id="join-community-button" class="quiet-button" type="button" title="Вступить в публичное сообщество">↗</button>
+        </div>
+      </div>
       <nav id="chat-list" class="chat-list" aria-label="Список чатов"></nav>
       <footer class="side-foot">kentGram · Web</footer>
     </aside>
@@ -56,6 +62,7 @@
         <button id="back-to-chats" class="icon-button back-button" type="button" aria-label="Назад к чатам">←</button>
         <div class="avatar" id="chat-avatar">K</div>
         <div class="chat-title"><strong id="chat-title">Чат</strong><span id="chat-subtitle">kentGram</span></div>
+        <button id="manage-members-button" class="quiet-button" type="button" title="Участники">Участники</button>
         <button id="create-poll-button" class="quiet-button" type="button" title="Создать опрос">Опрос</button>
       </header>
       <div id="messages" class="messages hidden" aria-live="polite" aria-relevant="additions"></div>
