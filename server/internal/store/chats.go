@@ -138,7 +138,20 @@ func (s *Store) DeleteChatMessage(ctx context.Context, chatID, messageID, sender
 		  AND deleted_at IS NULL
 		  AND EXISTS (SELECT 1 FROM chat_members WHERE chat_id = $2 AND user_id = $3)
 		RETURNING deleted_at`, messageID, chatID, senderID).Scan(&deletedAt)
-	if errors.Is(err, pgx.ErrNoRows) { return ErrNotFound }
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Repeated deletion by the same sender is idempotent, but does not
+		// create another event. Other users/chats still receive not-found.
+		var alreadyDeleted bool
+		checkErr := tx.QueryRow(ctx, `SELECT EXISTS(
+			SELECT 1 FROM messages m
+			WHERE m.id = $1 AND m.chat_id = $2 AND m.sender_id = $3
+			  AND m.deleted_at IS NOT NULL
+			  AND EXISTS (SELECT 1 FROM chat_members WHERE chat_id = $2 AND user_id = $3)
+		)`, messageID, chatID, senderID).Scan(&alreadyDeleted)
+		if checkErr != nil { return checkErr }
+		if alreadyDeleted { return tx.Commit(ctx) }
+		return ErrNotFound
+	}
 	if err != nil { return err }
 	if err := insertRealtimeEvent(ctx, tx, chatID, senderID, "message.deleted", map[string]any{
 		"chat_id": chatID, "message_id": messageID, "deleted_at": deletedAt,
