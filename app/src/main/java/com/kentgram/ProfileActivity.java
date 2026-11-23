@@ -9,6 +9,8 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.widget.*;
 import android.content.SharedPreferences;
+import android.content.Intent;
+import android.net.Uri;
 import org.json.JSONObject;
 import java.io.*;
 import java.net.*;
@@ -18,7 +20,9 @@ import java.util.concurrent.Executors;
 
 public final class ProfileActivity extends Activity {
     private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
-    private static final int BG=0xFF0D1118,PANEL=0xFF151C27,TEXT=0xFFF4F7FB,MUTED=0xFF9AA9BC,BLUE=0xFF17649A;
+    private static final int BG=0xFF090B10,PANEL=0xFF121720,TEXT=0xFFF4F6FA,MUTED=0xFF8994A6,BLUE=0xFF648DFF;
+    private static final int PICK_AVATAR=7301;
+    private static final int MAX_AVATAR_BYTES=5*1024*1024;
     private final ExecutorService io=Executors.newFixedThreadPool(2);
     private String token="", username="";
     private boolean own, following;
@@ -26,7 +30,7 @@ public final class ProfileActivity extends Activity {
     private LinearLayout content;
     private ImageView avatar;
     private EditText displayName,bio,avatarUrl;
-    private Button followButton,saveButton;
+    private Button followButton,saveButton,avatarUploadButton;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -41,29 +45,103 @@ public final class ProfileActivity extends Activity {
     }
 
     private void build() {
-        LinearLayout root=new LinearLayout(this); root.setOrientation(1); root.setBackgroundColor(BG);
-        LinearLayout header=new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(16),dp(10),dp(16),dp(10)); header.setBackgroundColor(PANEL);
-        Button back=button("‹"); back.setTextSize(20); header.addView(back,new LinearLayout.LayoutParams(dp(52),dp(48))); back.setOnClickListener(v->finish());
-        TextView title=label(own?"Мой профиль":"Профиль",21,TEXT,true); LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(0,-2,1);tp.leftMargin=dp(10);header.addView(title,tp);root.addView(header);
-        ScrollView scroll=new ScrollView(this);content=new LinearLayout(this);content.setOrientation(1);content.setPadding(dp(18),dp(22),dp(18),dp(24));scroll.addView(content);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);
-        avatar=new ImageView(this);avatar.setImageDrawable(getDrawable(android.R.drawable.sym_def_app_icon));avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);avatar.setBackground(round(PANEL,100));avatar.setClipToOutline(true);
-        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(112),dp(112));ap.gravity=Gravity.CENTER;ap.bottomMargin=dp(14);content.addView(avatar,ap);
-        displayName=field("Имя"); bio=field("О себе — до 160 символов"); avatarUrl=field("HTTPS-ссылка на аватар");
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(1);
+        root.setBackgroundColor(BG);
+
+        LinearLayout header=new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(18),dp(12),dp(18),dp(12));
+        Button back=button("‹");
+        back.setTextSize(25);
+        back.setBackground(round(0xFF1A2230,18));
+        header.addView(back,new LinearLayout.LayoutParams(dp(48),dp(46)));
+        back.setOnClickListener(v->finish());
+        TextView title=label(own?"Профиль":"Профиль пользователя",19,TEXT,true);
+        LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(0,-2,1);
+        tp.leftMargin=dp(12);
+        header.addView(title,tp);
+        root.addView(header);
+
+        ScrollView scroll=new ScrollView(this);
+        scroll.setClipToPadding(false);
+        content=new LinearLayout(this);
+        content.setOrientation(1);
+        content.setPadding(dp(18),dp(18),dp(18),dp(28));
+        scroll.addView(content);
+        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        setContentView(root);
+
+        avatar=new ImageView(this);
+        avatar.setImageDrawable(getDrawable(android.R.drawable.sym_def_app_icon));
+        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        avatar.setBackground(round(0xFF202D43,100));
+        avatar.setClipToOutline(true);
+        avatar.setElevation(dp(5));
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(dp(116),dp(116));
+        ap.gravity=Gravity.CENTER;
+        ap.bottomMargin=dp(15);
+        content.addView(avatar,ap);
+
+        TextView identity=label(own?"Ваш аккаунт":"Профиль kentGram",18,TEXT,true);
+        identity.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(-1,-2);
+        ip.bottomMargin=dp(18);
+        content.addView(identity,ip);
+
+        displayName=field("Имя");
+        bio=field("О себе — до 160 символов");
+        avatarUrl=field("HTTPS-ссылка на аватар");
         if(own) {
-            section("Имя пользователя"); 
-            section("Отображаемое имя");content.addView(displayName);
-            section("О себе");content.addView(bio);
-            section("Аватар");content.addView(avatarUrl);
-            TextView hint=label("Пока поддерживается ссылка на изображение HTTPS. Загрузка фото с устройства появится следующим этапом.",12,MUTED,false);hint.setPadding(0,0,0,dp(12));content.addView(hint);
-            saveButton=button("Сохранить изменения");content.addView(saveButton);saveButton.setOnClickListener(v->save());
+            LinearLayout card=new LinearLayout(this);
+            card.setOrientation(1);
+            card.setPadding(dp(16),dp(12),dp(16),dp(14));
+            card.setBackground(round(PANEL,22));
+            content.addView(card);
+            section(card,"Отображаемое имя");
+            card.addView(displayName);
+            section(card,"О себе");
+            card.addView(bio);
+            section(card,"Аватар");
+            card.addView(avatarUrl);
+            avatarUploadButton=button("Выбрать фото с устройства");
+            card.addView(avatarUploadButton);
+            avatarUploadButton.setOnClickListener(v->{
+                Intent pick=new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                pick.addCategory(Intent.CATEGORY_OPENABLE);
+                pick.setType("image/*");
+                startActivityForResult(pick,PICK_AVATAR);
+            });
+            TextView hint=label("JPEG или PNG · до 5 МБ. После загрузки ссылка останется постоянной.",12,MUTED,false);
+            hint.setPadding(0,0,0,dp(12));
+            card.addView(hint);
+            saveButton=button("Сохранить изменения");
+            card.addView(saveButton);
+            saveButton.setOnClickListener(v->save());
         } else {
-            section("Имя пользователя");content.addView(label("@"+username,16,MUTED,true));
-            section("Имя");content.addView(displayName);
-            section("О себе");content.addView(bio);
-            displayName.setEnabled(false);bio.setEnabled(false);
-            followButton=button("Подписаться");content.addView(followButton);followButton.setOnClickListener(v->toggleFollow());
+            LinearLayout card=new LinearLayout(this);
+            card.setOrientation(1);
+            card.setPadding(dp(16),dp(12),dp(16),dp(14));
+            card.setBackground(round(PANEL,22));
+            content.addView(card);
+            section(card,"Имя пользователя");
+            card.addView(label("@"+username,15,MUTED,true));
+            section(card,"Имя");
+            card.addView(displayName);
+            section(card,"О себе");
+            card.addView(bio);
+            displayName.setEnabled(false);
+            bio.setEnabled(false);
+            followButton=button("Подписаться");
+            LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,-2);
+            fp.topMargin=dp(12);
+            card.addView(followButton,fp);
+            followButton.setOnClickListener(v->toggleFollow());
         }
-        content.addView(label("Подписчики и подписки",13,MUTED,true));
+        TextView social=label("ПОДПИСЧИКИ И ПОДПИСКИ",10,MUTED,true);
+        social.setLetterSpacing(.12f);
+        social.setPadding(dp(2),dp(18),0,dp(8));
+        content.addView(social);
     }
 
     private void load() {
@@ -84,6 +162,78 @@ public final class ProfileActivity extends Activity {
             long followers=result.optLong("followers"),followingCount=result.optLong("following");
             content.addView(label(followers+" подписчиков  ·  "+followingCount+" подписок",14,MUTED,false));
             loadAvatar(result.optString("avatar_url",""));
+        });
+    }
+
+    @Override protected void onActivityResult(int requestCode,int resultCode,Intent data) {
+        super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode!=PICK_AVATAR || resultCode!=RESULT_OK || data==null || data.getData()==null)return;
+        Uri uri=data.getData();
+        if(avatarUploadButton!=null)avatarUploadButton.setEnabled(false);
+        io.execute(()->{
+            try(InputStream input=getContentResolver().openInputStream(uri);ByteArrayOutputStream output=new ByteArrayOutputStream()){
+                if(input==null)throw new IOException("file_unavailable");
+                byte[] buffer=new byte[8192];int total=0,n;
+                while((n=input.read(buffer))!=-1){
+                    total+=n;
+                    if(total>MAX_AVATAR_BYTES)throw new IOException("file_too_large");
+                    output.write(buffer,0,n);
+                }
+                String mime=getContentResolver().getType(uri);
+                if(!"image/jpeg".equals(mime) && !"image/png".equals(mime))
+                    throw new IOException("unsupported_format");
+                uploadAvatar(output.toByteArray(),mime);
+            }catch(Exception e){
+                runOnUiThread(()->{
+                    if(avatarUploadButton!=null)avatarUploadButton.setEnabled(true);
+                    String message=e.getMessage();
+                    toast("Не удалось открыть фото: "+("file_too_large".equals(message)?"максимум 5 МБ":
+                            "unsupported_format".equals(message)?"нужен JPEG или PNG":"ошибка чтения"));
+                });
+            }
+        });
+    }
+
+    private void uploadAvatar(byte[] bytes,String mime) {
+        io.execute(()->{
+            JSONObject result=new JSONObject();int status=0;
+            String boundary="kentgram-"+System.currentTimeMillis();
+            try{
+                HttpURLConnection c=(HttpURLConnection)new URL(API+"/me/avatar").openConnection();
+                c.setRequestMethod("POST");c.setDoOutput(true);
+                c.setConnectTimeout(15000);c.setReadTimeout(30000);
+                c.setRequestProperty("Accept","application/json");
+                c.setRequestProperty("Authorization","Bearer "+token);
+                c.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
+                String filename="image/jpeg".equals(mime)?"avatar.jpg":"avatar.png";
+                try(OutputStream out=c.getOutputStream()){
+                    out.write(("--"+boundary+"\r\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("Content-Disposition: form-data; name=\"avatar\"; filename=\""+filename+"\"\r\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(("Content-Type: "+mime+"\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+                    out.write(bytes);
+                    out.write(("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.UTF_8));
+                }
+                status=c.getResponseCode();
+                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
+                if(in!=null)try(InputStream stream=in;ByteArrayOutputStream output=new ByteArrayOutputStream()){
+                    byte[] buffer=new byte[4096];int n;while((n=stream.read(buffer))!=-1)output.write(buffer,0,n);
+                    result=new JSONObject(output.toString("UTF-8"));
+                }
+                c.disconnect();
+            }catch(Exception e){try{result.put("error","upload_failed");}catch(Exception ignored){}}
+            final JSONObject response=result;final int code=status;
+            runOnUiThread(()->{
+                if(avatarUploadButton!=null)avatarUploadButton.setEnabled(true);
+                if(code>=200&&code<300){
+                    String url=response.optString("avatar_url","");
+                    avatarUrl.setText(url);
+                    loadAvatar(url);
+                    toast("Фото профиля загружено");
+                }else{
+                    KentDialog.showMessage(this,"Не удалось загрузить фото",
+                            response.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
+                }
+            });
         });
     }
 
@@ -133,9 +283,10 @@ public final class ProfileActivity extends Activity {
         });
     }
 
-    private void section(String s){TextView t=label(s,13,MUTED,true);t.setPadding(0,dp(8),0,dp(5));content.addView(t);}
-    private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(MUTED);e.setHint(hint);e.setPadding(dp(13),dp(8),dp(13),dp(8));e.setBackground(round(PANEL,12));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);e.setLayoutParams(p);return e;}
-    private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(TEXT);b.setAllCaps(false);b.setBackground(round(BLUE,12));return b;}
+    private void section(String s){section(content,s);}
+    private void section(LinearLayout parent,String s){TextView t=label(s,11,MUTED,true);t.setLetterSpacing(.08f);t.setPadding(dp(2),dp(9),0,dp(5));parent.addView(t);}
+    private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(0xFF778397);e.setHint(hint);e.setTextSize(14);e.setPadding(dp(13),dp(10),dp(13),dp(10));e.setBackground(round(0xFF1A2230,13));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);e.setLayoutParams(p);return e;}
+    private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setBackground(round(BLUE,25));return b;}
     private TextView label(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);if(bold)t.setTypeface(null,Typeface.BOLD);return t;}
     private android.graphics.drawable.GradientDrawable round(int color,int radius){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}

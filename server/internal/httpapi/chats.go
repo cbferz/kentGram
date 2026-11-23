@@ -4,6 +4,8 @@ import (
     "errors"
     "net/http"
     "strconv"
+    "os"
+    "path/filepath"
     "strings"
 
     "github.com/cbferz/kentgram/server/internal/store"
@@ -50,6 +52,7 @@ func (a *API) sendChatMessage(w http.ResponseWriter,r *http.Request) {
     m,err:=a.db.SendChatMessage(r.Context(),chatID,userID(r),q.Text,q.ReplyToMessageID)
     if errors.Is(err,store.ErrNotFound) { writeError(w,http.StatusNotFound,"chat_or_reply_not_found");return }
     if err!=nil { writeError(w,http.StatusInternalServerError,"message_send_failed");return }
+    a.publishChatEvent(r.Context(), chatID, realtimeEvent{Type:"message.created", ChatID:chatID, MessageID:m.ID}, 0)
     writeJSON(w,http.StatusCreated,m)
 }
 
@@ -65,7 +68,7 @@ func (a *API) deleteChatMessage(w http.ResponseWriter, r *http.Request) {
         writeError(w, http.StatusBadRequest, "invalid_message_id")
         return
     }
-    err = a.db.DeleteChatMessage(r.Context(), chatID, messageID, userID(r))
+    storageName, err := a.db.DeleteChatMessage(r.Context(), chatID, messageID, userID(r))
     if errors.Is(err, store.ErrNotFound) {
         writeError(w, http.StatusNotFound, "message_not_found")
         return
@@ -74,5 +77,154 @@ func (a *API) deleteChatMessage(w http.ResponseWriter, r *http.Request) {
         writeError(w, http.StatusInternalServerError, "message_delete_failed")
         return
     }
+    if storageName != "" {
+        _ = os.Remove(filepath.Join(a.cfg.MediaDir, storageName))
+    }
+    a.publishChatEvent(r.Context(), chatID, realtimeEvent{Type:"message.deleted", ChatID:chatID, MessageID:messageID}, 0)
     writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+func (a *API) markChatRead(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+	if err != nil || chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+		return
+	}
+	var q struct {
+		LastReadMessageID int64 `json:"last_read_message_id"`
+	}
+	if decodeJSON(w, r, &q) != nil || q.LastReadMessageID < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_read_cursor")
+		return
+	}
+	cursor, err := a.db.MarkChatRead(r.Context(), chatID, userID(r), q.LastReadMessageID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "chat_not_found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "chat_read_update_failed")
+		return
+	}
+	a.publishChatEvent(r.Context(), chatID, realtimeEvent{
+		Type: "chat.read", ChatID: chatID, MessageID: cursor, UserID: userID(r),
+	}, 0)
+	writeJSON(w, http.StatusOK, map[string]int64{"last_read_message_id": cursor})
+}
+
+func (a *API) getChatReadCursors(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+	if err != nil || chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+		return
+	}
+	cursors, err := a.db.ChatReadCursors(r.Context(), chatID, userID(r))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "chat_not_found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "read_cursors_load_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"read_cursors": cursors})
+}
+
+func (a *API) forwardChatMessage(w http.ResponseWriter, r *http.Request) {
+	sourceChatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+	if err != nil || sourceChatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+		return
+	}
+	messageID, err := strconv.ParseInt(chi.URLParam(r, "messageID"), 10, 64)
+	if err != nil || messageID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_message_id")
+		return
+	}
+	var q struct { DestinationChatID int64 `json:"destination_chat_id"` }
+	if decodeJSON(w, r, &q) != nil || q.DestinationChatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_destination_chat")
+		return
+	}
+	message, err := a.db.ForwardChatMessage(r.Context(), sourceChatID, messageID, q.DestinationChatID, userID(r))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "source_or_destination_not_found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "message_forward_failed")
+		return
+	}
+	a.publishChatEvent(r.Context(), q.DestinationChatID, realtimeEvent{
+		Type: "message.created", ChatID: q.DestinationChatID, MessageID: message.ID,
+	}, 0)
+	writeJSON(w, http.StatusCreated, message)
+}
+
+func (a *API) pinChatMessage(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+	if err != nil || chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+		return
+	}
+	var q struct { MessageID int64 `json:"message_id"` }
+	if decodeJSON(w, r, &q) != nil || q.MessageID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_message_id")
+		return
+	}
+	if err := a.db.PinChatMessage(r.Context(), chatID, q.MessageID, userID(r)); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "message_or_permission_not_found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "message_pin_failed")
+		return
+	}
+	a.publishChatEvent(r.Context(), chatID, realtimeEvent{
+		Type: "chat.pinned", ChatID: chatID, MessageID: q.MessageID, UserID: userID(r),
+	}, 0)
+	writeJSON(w, http.StatusOK, map[string]any{"pinned": true, "message_id": q.MessageID})
+}
+
+func (a *API) unpinChatMessage(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+	if err != nil || chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+		return
+	}
+	if err := a.db.UnpinChatMessage(r.Context(), chatID, userID(r)); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "pin_or_permission_not_found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "message_unpin_failed")
+		return
+	}
+	a.publishChatEvent(r.Context(), chatID, realtimeEvent{Type: "chat.unpinned", ChatID: chatID, UserID: userID(r)}, 0)
+	writeJSON(w, http.StatusOK, map[string]bool{"unpinned": true})
+}
+
+func (a *API) getPinnedChatMessage(w http.ResponseWriter, r *http.Request) {
+	chatID, err := strconv.ParseInt(chi.URLParam(r, "chatID"), 10, 64)
+	if err != nil || chatID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_chat_id")
+		return
+	}
+	message, err := a.db.PinnedChatMessage(r.Context(), chatID, userID(r))
+	if errors.Is(err, store.ErrNotFound) {
+		member, memberErr := a.db.IsChatMember(r.Context(), chatID, userID(r))
+		if memberErr != nil {
+			writeError(w, http.StatusInternalServerError, "chat_access_failed")
+			return
+		}
+		if !member {
+			writeError(w, http.StatusNotFound, "chat_not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"pinned_message": nil})
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "pinned_message_load_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pinned_message": message})
 }
