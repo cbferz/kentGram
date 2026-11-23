@@ -43,6 +43,7 @@ public final class MainActivity extends Activity {
     private OkHttpClient realtimeHttp;
     private volatile WebSocket realtimeSocket;
     private volatile boolean realtimeConnecting=false, realtimeReconnectScheduled=false;
+    private volatile boolean realtimeSyncInFlight=false;
     private Runnable realtimeReconnectTask;
     private LinearLayout activeMessages, activeChatsList;
     private ScrollView activeHistory;
@@ -1808,6 +1809,7 @@ public final class MainActivity extends Activity {
                 realtimeConnecting=false;
                 realtimeSocket=socket;
                 realtimeReconnectScheduled=false;
+                syncRealtimeEvents();
                 sendRealtimePresenceSubscribe(currentChat);
             }
             @Override public void onMessage(WebSocket socket,String text){
@@ -1834,6 +1836,40 @@ public final class MainActivity extends Activity {
                 }
             }
         });
+    }
+
+    private void syncRealtimeEvents(){
+        if(token.isEmpty()||prefs==null||realtimeSyncInFlight)return;
+        realtimeSyncInFlight=true;
+        long since=prefs.getLong("realtime_cursor",0L);
+        requestMethod("GET","/realtime/events?since="+since,null,true,result->{
+            realtimeSyncInFlight=false;
+            JSONArray events=result.optJSONArray("events");
+            boolean changed=false;
+            if(events!=null){
+                for(int i=0;i<events.length();i++){
+                    JSONObject event=events.optJSONObject(i);
+                    if(event==null)continue;
+                    changed=true;
+                }
+            }
+            long cursor=Math.max(since,result.optLong("cursor",since));
+            prefs.edit().putLong("realtime_cursor",cursor).apply();
+            if(changed){
+                cachedChats=null;
+                if(currentChat>0&&activeMessages!=null&&activeHistory!=null){
+                    refreshMessages(currentChat,activeMessages,activeHistory);
+                }else if(activeChatsList!=null){
+                    requestGet("/chats",fresh->{
+                        JSONArray chats=fresh.optJSONArray("chats");
+                        if(chats!=null){
+                            cachedChats=chats;
+                            if(activeChatsList!=null)renderChats(activeChatsList,chats);
+                        }
+                    });
+                }
+            }
+        },(error,status)->realtimeSyncInFlight=false);
     }
 
     private void scheduleRealtimeReconnect(){
