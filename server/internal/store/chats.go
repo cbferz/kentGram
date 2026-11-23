@@ -2,6 +2,7 @@ package store
 
 import (
     "context"
+    "encoding/json"
     "errors"
     "time"
     "strconv"
@@ -36,6 +37,7 @@ type ChatMessage struct {
     Body string `json:"body"`
     CreatedAt time.Time `json:"created_at"`
     EditedAt *time.Time `json:"edited_at,omitempty"`
+    Reactions []MessageReaction `json:"reactions"`
     IsMine bool `json:"is_mine"`
 	ReplyToMessageID *int64 `json:"reply_to_message_id,omitempty"`
 	ReplyToBody string `json:"reply_to_body,omitempty"`
@@ -107,7 +109,7 @@ func (s *Store) IsChatMember(ctx context.Context, chatID, userID int64) (bool,er
 
 func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int64, limit int) ([]ChatMessage,error) {
     if limit < 1 || limit > 100 { limit = 50 }
-    rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,(m.sender_id=$2),m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,''),
+    rows,err := s.Pool.Query(ctx,`SELECT m.id,m.chat_id,m.sender_id,u.username,m.body,m.created_at,m.edited_at,(m.sender_id=$2),m.reply_to_message_id,COALESCE(reply.body,''),COALESCE(reply_user.username,''),
         COALESCE(m.media_id,''),COALESCE(media.content_type,''),COALESCE(media.original_name,''),COALESCE(media.size_bytes,0),COALESCE(m.forwarded_from_chat_id,0),COALESCE(m.forwarded_from_message_id,0),m.forwarded_from_username
         FROM messages m JOIN users u ON u.id=m.sender_id
         LEFT JOIN messages reply ON reply.id=m.reply_to_message_id AND reply.chat_id=m.chat_id AND reply.deleted_at IS NULL
@@ -120,7 +122,9 @@ func (s *Store) ChatMessages(ctx context.Context, chatID, viewerID, beforeID int
     out:=[]ChatMessage{}
     for rows.Next() {
         var m ChatMessage
-        if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.IsMine,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername,&m.MediaID,&m.MediaMime,&m.MediaName,&m.MediaSize,&m.ForwardedFromChatID,&m.ForwardedFromMessageID,&m.ForwardedFromUsername);err!=nil{return nil,err}
+        var reactionsJSON []byte
+        if err:=rows.Scan(&m.ID,&m.ChatID,&m.SenderID,&m.SenderUsername,&m.Body,&m.CreatedAt,&m.EditedAt,&m.IsMine,&m.ReplyToMessageID,&m.ReplyToBody,&m.ReplyToSenderUsername,&m.MediaID,&m.MediaMime,&m.MediaName,&m.MediaSize,&m.ForwardedFromChatID,&m.ForwardedFromMessageID,&m.ForwardedFromUsername,&reactionsJSON);err!=nil{return nil,err}
+        if err:=json.Unmarshal(reactionsJSON,&m.Reactions);err!=nil{return nil,err}
         if m.MediaID!="" { m.MediaURL="/chats/"+strconv.FormatInt(m.ChatID,10)+"/media/"+m.MediaID }
         out=append(out,m)
     }
