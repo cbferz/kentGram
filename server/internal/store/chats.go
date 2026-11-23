@@ -35,6 +35,7 @@ type ChatMessage struct {
     SenderUsername string `json:"sender_username"`
     Body string `json:"body"`
     CreatedAt time.Time `json:"created_at"`
+    EditedAt *time.Time `json:"edited_at,omitempty"`
     IsMine bool `json:"is_mine"`
 	ReplyToMessageID *int64 `json:"reply_to_message_id,omitempty"`
 	ReplyToBody string `json:"reply_to_body,omitempty"`
