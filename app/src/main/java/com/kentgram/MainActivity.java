@@ -1840,11 +1840,13 @@ public final class MainActivity extends Activity {
             realtimeSyncInFlight=false;
             JSONArray events=result.optJSONArray("events");
             boolean changed=false;
+            boolean communityChanged=false;
             if(events!=null){
                 for(int i=0;i<events.length();i++){
                     JSONObject event=events.optJSONObject(i);
                     if(event==null)continue;
                     changed=true;
+                    if(event.optString("type","").startsWith("community."))communityChanged=true;
                 }
             }
             long cursor=Math.max(since,result.optLong("cursor",since));
@@ -1854,7 +1856,28 @@ public final class MainActivity extends Activity {
             }
             if(changed){
                 cachedChats=null;
-                if(currentChat>0&&activeMessages!=null&&activeHistory!=null){
+                if(communityChanged){
+                    requestGet("/chats",fresh->{
+                        JSONArray chats=fresh.optJSONArray("chats");
+                        if(chats==null)return;
+                        cachedChats=chats;
+                        boolean currentStillMember=false;
+                        for(int i=0;i<chats.length();i++){
+                            JSONObject chat=chats.optJSONObject(i);
+                            if(chat!=null&&chat.optLong("id")==currentChat){
+                                currentStillMember=true;
+                                break;
+                            }
+                        }
+                        if(currentChat>0&&!currentStillMember){
+                            showChats();
+                        }else if(currentChat>0&&activeMessages!=null&&activeHistory!=null){
+                            refreshMessages(currentChat,activeMessages,activeHistory);
+                        }else if(activeChatsList!=null){
+                            renderChats(activeChatsList,chats);
+                        }
+                    });
+                }else if(currentChat>0&&activeMessages!=null&&activeHistory!=null){
                     refreshMessages(currentChat,activeMessages,activeHistory);
                 }else if(activeChatsList!=null){
                     requestGet("/chats",fresh->{
@@ -1987,6 +2010,8 @@ public final class MainActivity extends Activity {
                             }
                         });
                     }
+                }else if(type.startsWith("community.")){
+                    syncRealtimeEvents();
                 }else if("user.presence".equals(type)&&currentChat==chatId&&
                         event.optLong("user_id",0)==activePeerID&&activePeerID>0&&activeChatStatus!=null){
                     activeChatSubtitle=event.optBoolean("online")?"в сети":"не в сети";

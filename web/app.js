@@ -825,6 +825,9 @@
       socket.onmessage = (event) => {
         let message;
         try { message = JSON.parse(event.data); } catch { return; }
+        if (typeof message.type === "string" && message.type.startsWith("community.")) {
+          syncRealtimeEvents();
+        }
         if (message.chat_id && state.chat && message.chat_id === state.chat.id &&
           ["message.created", "message.edited", "message.deleted", "message.reactions_updated", "chat.read", "poll.created", "poll.updated", "poll.closed"].includes(message.type)) {
           loadMessages(state.chat.id).catch(() => {});
@@ -861,13 +864,18 @@
         if (chatId && state.chat?.id === chatId) refreshCurrentChat = true;
         if (["chat.created", "message.created", "message.edited", "message.deleted",
           "message.reactions_updated", "chat.read", "chat.pinned", "chat.unpinned",
-          "poll.created", "poll.updated", "poll.closed"].includes(event.type)) refreshChats = true;
+          "poll.created", "poll.updated", "poll.closed"].includes(event.type) ||
+          (typeof event.type === "string" && event.type.startsWith("community."))) refreshChats = true;
       }
       const highWater = Number(data.cursor || data.high_water || 0);
       if (highWater > state.realtimeCursor) state.realtimeCursor = highWater;
       sessionStorage.setItem("kg_realtime_cursor_" + state.me.id, String(state.realtimeCursor));
-      if (refreshCurrentChat && state.chat) await loadMessages(state.chat.id);
       if (refreshChats) await loadChats();
+      if (state.chat && !state.chats.some(chat => Number(chat.id) === Number(state.chat.id))) {
+        closeChatView();
+      } else if (refreshCurrentChat && state.chat) {
+        await loadMessages(state.chat.id);
+      }
     } catch (error) {
       console.debug("kentGram realtime recovery:", error.message);
     } finally {
