@@ -49,6 +49,11 @@ func (s *Store) CreateCommunityChat(ctx context.Context, ownerID int64, kind, ti
 	}
 	chat.Role = "owner"
 	chat.MemberCount = 1
+	if err := insertRealtimeEvent(ctx, tx, chat.ID, ownerID, "community.created", map[string]any{
+		"chat_id": chat.ID, "owner_id": ownerID, "kind": kind,
+	}); err != nil {
+		return CommunityChat{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return CommunityChat{}, err
 	}
