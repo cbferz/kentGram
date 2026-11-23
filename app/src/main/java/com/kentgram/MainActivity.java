@@ -1484,7 +1484,7 @@ public final class MainActivity extends Activity {
                         JSONObject body=new JSONObject();
                         try{body.put("option_ids",selected);}catch(JSONException ignored){}
                         vote.setEnabled(false);
-                        request("/chats/"+chatId+"/polls/"+poll.optLong("id")+"/vote",body,true,result->{
+                        request("/chats/"+chatId+"/polls/"+poll.optLong("id")+"/vote",body,true,voteResult->{
                             refreshMessages(chatId,messages,history);
                         },(error,status)->{
                             vote.setEnabled(true);
