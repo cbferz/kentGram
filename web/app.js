@@ -415,6 +415,8 @@
     const chat = state.chats.find((item) => item.id === id);
     if (!chat) return;
     state.chat = chat;
+    state.replyToMessageId = 0;
+    $("message-input").placeholder = "Написать сообщение…";
     $("welcome").classList.add("hidden");
     $("chat-header").classList.remove("hidden");
     $("messages").classList.remove("hidden");
@@ -437,6 +439,8 @@
 
   function closeChatView() {
     state.chat = null;
+    state.replyToMessageId = 0;
+    $("message-input").placeholder = "Написать сообщение…";
     state.messageRequest++;
     $("app").classList.remove("chat-open");
     $("welcome").classList.remove("hidden");
