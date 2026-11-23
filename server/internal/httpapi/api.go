@@ -71,6 +71,7 @@ func (a *API) Routes() http.Handler {
 			r.Delete("/sessions/{sessionID}", a.revokeSession)
 			r.Post("/sessions/revoke-others", a.revokeOtherSessions)
 
+			r.Get("/realtime/events", a.realtimeEvents)
 			r.Get("/chats", a.listChats)
 			r.Post("/chats/direct", a.createDirectChat)
 			r.Post("/chats/community", a.createCommunityChat)
