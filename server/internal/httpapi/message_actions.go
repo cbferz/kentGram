@@ -75,6 +75,10 @@ func (a *API) toggleMessageReaction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "message_not_found")
 		return
 	}
+	if errors.Is(err, store.ErrReactionLimit) {
+		writeError(w, http.StatusConflict, "reaction_limit_reached")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "reaction_update_failed")
 		return
