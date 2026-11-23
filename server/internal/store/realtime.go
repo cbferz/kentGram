@@ -60,9 +60,15 @@ func (s *Store) RealtimeBatch(ctx context.Context, uid, afterID int64, limit int
 		       to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
 		FROM realtime_events e
 		WHERE e.id > $1 AND e.id <= $2
-		  AND EXISTS (
-		      SELECT 1 FROM chat_members cm
-		      WHERE cm.chat_id = e.chat_id AND cm.user_id = $3
+		  AND (
+		      EXISTS (
+		          SELECT 1 FROM chat_members cm
+		          WHERE cm.chat_id = e.chat_id AND cm.user_id = $3
+		      )
+		      OR (
+		          e.event_type IN ('community.member_removed', 'community.member_left')
+		          AND e.payload->>'user_id' = $3::text
+		      )
 		  )
 		ORDER BY e.id ASC
 		LIMIT $4
