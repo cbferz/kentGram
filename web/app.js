@@ -468,7 +468,7 @@
       await api("/chats/" + encodeURIComponent(chatId) + "/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, reply_to_message_id: state.replyToMessageId || 0 })
       });
       state.replyToMessageId = 0;
       input.placeholder = "Написать сообщение…";
