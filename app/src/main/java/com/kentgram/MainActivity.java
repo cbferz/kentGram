@@ -1855,6 +1855,9 @@ public final class MainActivity extends Activity {
             }
             long cursor=Math.max(since,result.optLong("cursor",since));
             prefs.edit().putLong("realtime_cursor",cursor).apply();
+            if(events!=null&&events.length()>=100){
+                uiHandler.post(this::syncRealtimeEvents);
+            }
             if(changed){
                 cachedChats=null;
                 if(currentChat>0&&activeMessages!=null&&activeHistory!=null){
