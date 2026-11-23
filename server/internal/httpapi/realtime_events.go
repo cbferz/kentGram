@@ -8,6 +8,7 @@ import (
 )
 
 func (a *API) realtimeEvents(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	since := int64(0)
 	if raw := r.URL.Query().Get("since"); raw != "" {
 		value, err := strconv.ParseInt(raw, 10, 64)
