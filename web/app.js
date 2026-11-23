@@ -206,6 +206,10 @@
   async function loadChats() {
     const data = await api("/chats");
     state.chats = Array.isArray(data.chats) ? data.chats : [];
+    if (state.chat) {
+      const refreshedChat = state.chats.find(chat => chat.id === state.chat.id);
+      if (refreshedChat) state.chat = refreshedChat;
+    }
     const list = $("chat-list");
     list.replaceChildren();
     if (!state.chats.length) {
