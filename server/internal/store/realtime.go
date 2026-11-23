@@ -64,6 +64,7 @@ func (s *Store) RealtimeBatch(ctx context.Context, uid, afterID int64, limit int
 		      EXISTS (
 		          SELECT 1 FROM chat_members cm
 		          WHERE cm.chat_id = e.chat_id AND cm.user_id = $3
+		            AND cm.joined_at <= e.created_at
 		      )
 		      OR (
 		          e.event_type IN ('community.member_removed', 'community.member_left')
