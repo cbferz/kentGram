@@ -8,7 +8,8 @@
     refresh: sessionStorage.getItem("kg_refresh") || "",
     me: null, chats: [], chat: null, replyToMessageId: 0, socket: null, socketTimer: 0,
     socketDelay: 1000, authMode: "login", searchTimer: 0, toastTimer: 0,
-    refreshing: null, booting: false, stopped: false, messageRequest: 0
+    refreshing: null, booting: false, stopped: false, messageRequest: 0,
+    realtimeCursor: Number(sessionStorage.getItem("kg_realtime_cursor") || 0), realtimeSyncing: false
   };
   const MAX_FILE = 20 * 1024 * 1024;
   const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "application/pdf"]);
@@ -591,6 +592,7 @@
       socket.onopen = () => {
         if (state.socket !== socket) return;
         state.socketDelay = 1000;
+        syncRealtimeEvents();
         for (const chat of state.chats) {
           socket.send(JSON.stringify({ type: "presence.subscribe", chat_id: chat.id }));
         }
@@ -619,6 +621,35 @@
 
 
 
+  async function syncRealtimeEvents() {
+    if (!state.access || state.stopped || state.realtimeSyncing) return;
+    state.realtimeSyncing = true;
+    try {
+      const data = await api("/realtime/events?since=" + encodeURIComponent(state.realtimeCursor));
+      const events = Array.isArray(data.events) ? data.events : [];
+      let refreshChats = false;
+      let refreshCurrentChat = false;
+      for (const event of events) {
+        const cursor = Number(event.id || 0);
+        if (cursor > state.realtimeCursor) state.realtimeCursor = cursor;
+        const chatId = Number(event.chat_id || 0);
+        if (chatId && state.chat?.id === chatId) refreshCurrentChat = true;
+        if (["chat.created", "message.created", "message.edited", "message.deleted",
+          "message.reactions_updated", "chat.read", "chat.pinned", "chat.unpinned",
+          "poll.created", "poll.updated", "poll.closed"].includes(event.type)) refreshChats = true;
+      }
+      const highWater = Number(data.cursor || data.high_water || 0);
+      if (highWater > state.realtimeCursor) state.realtimeCursor = highWater;
+      sessionStorage.setItem("kg_realtime_cursor", String(state.realtimeCursor));
+      if (refreshCurrentChat && state.chat) await loadMessages(state.chat.id);
+      if (refreshChats) await loadChats();
+    } catch (error) {
+      console.debug("kentGram realtime recovery:", error.message);
+    } finally {
+      state.realtimeSyncing = false;
+    }
+  }
+
   // Автоматическая синхронизация веб-клиента.
   let autoSyncBusy = false;
   let lastChatsSync = 0;
@@ -629,6 +660,7 @@
     autoSyncBusy = true;
     try {
       const now = Date.now();
+      await syncRealtimeEvents();
 
       if (now - lastChatsSync >= 10000) {
         await loadChats();
