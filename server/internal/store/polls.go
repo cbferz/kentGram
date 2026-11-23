@@ -49,6 +49,9 @@ func (s *Store) CreatePoll(ctx context.Context, chatID, creatorID int64, questio
 		if _, err = tx.Exec(ctx, `INSERT INTO poll_options(poll_id,option_text,position) VALUES($1,$2,$3)`,
 			p.ID, strings.TrimSpace(option), i); err != nil { return p, norm(err) }
 	}
+	if err = insertRealtimeEvent(ctx, tx, chatID, creatorID, "poll.created", map[string]any{
+		"chat_id": chatID, "poll_id": p.ID,
+	}); err != nil { return p, err }
 	if err = tx.Commit(ctx); err != nil { return Poll{}, err }
 	return s.GetPoll(ctx, chatID, p.ID, creatorID)
 }
@@ -105,12 +108,18 @@ func (s *Store) VotePoll(ctx context.Context, chatID, pollID, userID int64, opti
 	for _, optionID := range optionIDs {
 		if _, err := tx.Exec(ctx,`INSERT INTO poll_votes(poll_id,option_id,user_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,pollID,optionID,userID); err != nil { return Poll{},err }
 	}
+	if err := insertRealtimeEvent(ctx, tx, chatID, userID, "poll.updated", map[string]any{
+		"chat_id": chatID, "poll_id": pollID,
+	}); err != nil { return Poll{},err }
 	if err := tx.Commit(ctx); err != nil { return Poll{},err }
 	return s.GetPoll(ctx,chatID,pollID,userID)
 }
 
 func (s *Store) ClosePoll(ctx context.Context, chatID, pollID, actorID int64) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE polls p SET is_closed=TRUE
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE polls p SET is_closed=TRUE
 		WHERE p.id=$2 AND p.chat_id=$1 AND p.is_closed=FALSE
 		  AND (p.creator_id=$3 OR EXISTS(
 		    SELECT 1 FROM chat_members cm WHERE cm.chat_id=p.chat_id AND cm.user_id=$3 AND cm.role IN ('owner','admin')
@@ -119,7 +128,10 @@ func (s *Store) ClosePoll(ctx context.Context, chatID, pollID, actorID int64) er
 		chatID,pollID,actorID)
 	if err != nil { return err }
 	if tag.RowsAffected()==0 { return ErrNotFound }
-	return nil
+	if err := insertRealtimeEvent(ctx, tx, chatID, actorID, "poll.closed", map[string]any{
+		"chat_id": chatID, "poll_id": pollID,
+	}); err != nil { return err }
+	return tx.Commit(ctx)
 }
 
 
