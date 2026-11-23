@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cbferz/kentgram/server/internal/config"
+	"github.com/cbferz/kentgram/server/internal/realtime"
 	"github.com/cbferz/kentgram/server/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -17,10 +18,11 @@ type API struct {
 	apiLimiter   *ipRateLimiter
 	authLimiter  *ipRateLimiter
 	loginLimiter *ipRateLimiter
+	hub          *realtime.Hub
 }
 
 func New(db *store.Store, cfg config.Config) *API {
-	return &API{
+	a := &API{
 		db:        db,
 		cfg:       cfg,
 		jwtSecret: []byte(cfg.JWTSecret),
@@ -31,6 +33,8 @@ func New(db *store.Store, cfg config.Config) *API {
 		// Brute-force guard per target account, independent of source IP.
 		loginLimiter: newIPRateLimiter(10, 15*time.Minute),
 	}
+	a.hub = a.newHub()
+	return a
 }
 
 func (a *API) Routes() http.Handler {
@@ -50,6 +54,10 @@ func (a *API) Routes() http.Handler {
 			r.Post("/auth/refresh", a.refresh)
 		})
 
+		// The WebSocket authenticates with its first frame, not a header, so it
+		// sits outside the Bearer-token group.
+		r.Get("/ws", a.hub.ServeWS)
+
 		r.Group(func(r chi.Router) {
 			r.Use(a.authenticate)
 
@@ -62,7 +70,17 @@ func (a *API) Routes() http.Handler {
 			r.Post("/chats/direct", a.createDirectChat)
 			r.Get("/chats/{chatID}/messages", a.listChatMessages)
 			r.Post("/chats/{chatID}/messages", a.sendChatMessage)
+			r.Patch("/chats/{chatID}/messages/{messageID}", a.editChatMessage)
 			r.Delete("/chats/{chatID}/messages/{messageID}", a.deleteChatMessage)
+			r.Post("/chats/{chatID}/messages/{messageID}/reactions", a.addReaction)
+			r.Delete("/chats/{chatID}/messages/{messageID}/reactions", a.removeReaction)
+			r.Post("/chats/{chatID}/messages/{messageID}/forward", a.forwardChatMessage)
+			r.Get("/chats/{chatID}/pins", a.listPinnedMessages)
+			r.Put("/chats/{chatID}/pins/{messageID}", a.pinChatMessage)
+			r.Delete("/chats/{chatID}/pins/{messageID}", a.unpinChatMessage)
+			r.Post("/chats/{chatID}/read", a.markChatRead)
+			r.Post("/chats/{chatID}/typing", a.typing)
+			r.Get("/presence", a.presence)
 
 			r.Get("/contacts", a.contacts)
 			r.Get("/me", a.me)

@@ -137,7 +137,6 @@ func (s *Store) Unfollow(ctx context.Context, followerID, targetID int64) error 
 	return err
 }
 
- 
 // FollowingUsers returns the accounts the viewer follows, which form the
 // initial contact list. The viewer ID is also used for relationship metadata.
 func (s *Store) FollowingUsers(ctx context.Context, viewerID int64) ([]PublicProfile, error) {

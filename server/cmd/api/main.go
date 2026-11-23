@@ -28,7 +28,9 @@ func main() {
 		log.Fatalf("database migration: %v", err)
 	}
 
-	handler := httpapi.New(db, cfg).Routes()
+	api := httpapi.New(db, cfg)
+	defer api.Close()
+	handler := api.Routes()
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           handler,
@@ -51,6 +53,7 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	api.Close() // hijacked WebSockets are not drained by srv.Shutdown
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("graceful shutdown: %v", err)
 	}

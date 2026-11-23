@@ -194,6 +194,7 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "logout_failed")
 		return
 	}
+	a.hub.CloseSession(sessionID(r))
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -221,6 +222,7 @@ func (a *API) revokeSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "revoke_failed")
 		return
 	}
+	a.hub.CloseSession(id)
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -230,6 +232,7 @@ func (a *API) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "revoke_failed")
 		return
 	}
+	a.hub.CloseUserExcept(userID(r), sessionID(r))
 	writeJSON(w, http.StatusOK, map[string]int64{"revoked": n})
 }
 

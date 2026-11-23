@@ -142,6 +142,22 @@ func (h *Hub) closeSet(pick func() map[*client]struct{}) {
 	}
 }
 
+// CloseUserExcept drops every connection of the user except those that belong
+// to keepSessionID ("sign out other devices").
+func (h *Hub) CloseUserExcept(userID, keepSessionID int64) {
+	h.mu.RLock()
+	var cs []*client
+	for c := range h.byUser[userID] {
+		if c.id.SessionID != keepSessionID {
+			cs = append(cs, c)
+		}
+	}
+	h.mu.RUnlock()
+	for _, c := range cs {
+		c.close(closePolicy, "session ended")
+	}
+}
+
 // Close shuts the hub down and disconnects everyone.
 func (h *Hub) Close() {
 	h.mu.Lock()

@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,10 @@ type Config struct {
 	// are additionally checked against the session table on every request.
 	AccessTTL  time.Duration
 	RefreshTTL time.Duration
+	// WSAllowedOrigins lists browser origins (scheme://host[:port]) allowed to
+	// open the realtime WebSocket from another host, e.g. the web client.
+	// Native apps send no Origin header and are always allowed.
+	WSAllowedOrigins []string
 }
 
 func Load() Config {
@@ -23,6 +28,8 @@ func Load() Config {
 		JWTSecret:   os.Getenv("JWT_SECRET"),
 		AccessTTL:   envDuration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTTL:  envDuration("REFRESH_TOKEN_TTL", 30*24*time.Hour),
+
+		WSAllowedOrigins: envList("WS_ALLOWED_ORIGINS"),
 	}
 	if len(cfg.JWTSecret) < 32 {
 		log.Fatal("JWT_SECRET must be set and contain at least 32 characters")
@@ -47,4 +54,16 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		log.Fatalf("%s must be a positive duration such as 15m or 720h", key)
 	}
 	return d
+}
+
+// envList reads a comma-separated list, trimming blanks and trailing slashes.
+func envList(key string) []string {
+	var out []string
+	for _, part := range strings.Split(os.Getenv(key), ",") {
+		part = strings.TrimRight(strings.TrimSpace(part), "/")
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

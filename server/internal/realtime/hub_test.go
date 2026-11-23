@@ -464,3 +464,17 @@ func TestFragmentedInboundAuthIsNotAccepted(t *testing.T) {
 		t.Fatalf("close code %d", code)
 	}
 }
+
+func TestCloseUserExceptKeepsCurrentSession(t *testing.T) {
+	h, srv := newTestHub(t, Config{})
+	keep := connect(t, srv, "u1")   // session 101
+	other := connect(t, srv, "u1b") // session 102
+	h.CloseUserExcept(1, 101)
+	if code := other.expectClosed(2 * time.Second); code != closePolicy && code != -1 {
+		t.Fatalf("other device close code %d", code)
+	}
+	h.Publish([]int64{1}, Event{Type: "kept"})
+	if ev, err := keep.nextEvent(2 * time.Second); err != nil || ev.Type != "kept" {
+		t.Fatalf("current session was dropped: %+v %v", ev, err)
+	}
+}
