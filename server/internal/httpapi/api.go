@@ -24,25 +24,24 @@ func New(db *store.Store, cfg config.Config) *API {
 		db:        db,
 		cfg:       cfg,
 		jwtSecret: []byte(cfg.JWTSecret),
-		// General API traffic, per client IP.
 		apiLimiter: newIPRateLimiter(120, time.Minute),
-		// Credential endpoints are much stricter per client IP.
 		authLimiter: newIPRateLimiter(10, time.Minute),
-		// Brute-force guard per target account, independent of source IP.
 		loginLimiter: newIPRateLimiter(10, 15*time.Minute),
 	}
 }
 
 func (a *API) Routes() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer,
-		middleware.Timeout(20*time.Second), securityHeaders)
+	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, securityHeaders)
 
+	// WebSocket connections are intentionally outside chi's request timeout:
+	// the socket is long-lived and has its own bounded heartbeat/read deadlines.
+	r.With(a.apiLimiter.middleware).Get("/api/v1/realtime", a.realtime)
 	r.Get("/health", a.health)
 	r.Get("/media/avatars/{filename}", a.avatarFile)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Use(a.apiLimiter.middleware)
+		r.Use(middleware.Timeout(20*time.Second), a.apiLimiter.middleware)
 
 		r.Group(func(r chi.Router) {
 			r.Use(a.authLimiter.middleware)
@@ -58,6 +57,7 @@ func (a *API) Routes() http.Handler {
 			r.Get("/sessions", a.listSessions)
 			r.Delete("/sessions/{sessionID}", a.revokeSession)
 			r.Post("/sessions/revoke-others", a.revokeOtherSessions)
+			r.Post("/realtime/ticket", a.createRealtimeTicket)
 
 			r.Get("/chats", a.listChats)
 			r.Post("/chats/direct", a.createDirectChat)
