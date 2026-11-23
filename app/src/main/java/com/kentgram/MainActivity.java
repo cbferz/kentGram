@@ -418,6 +418,12 @@ public final class MainActivity extends Activity {
                         "Понятно",null);
                 return;
             }
+            if(registering[0] && pass.getBytes(java.nio.charset.StandardCharsets.UTF_8).length < 10){
+                KentDialog.showMessage(this,"Слишком короткий пароль",
+                        "Минимальная длина пароля — 10 байт.",
+                        "Понятно",null);
+                return;
+            }
             if(registering[0]&&!android.util.Patterns.EMAIL_ADDRESS.matcher(mail).matches()){
                 KentDialog.showMessage(this,"Проверь почту","Введи корректный адрес электронной почты.","Понятно",null);
                 return;
