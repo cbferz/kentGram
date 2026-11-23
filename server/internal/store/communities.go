@@ -85,73 +85,74 @@ func (s *Store) ListCommunityMembers(ctx context.Context, chatID, viewerID int64
 // AddCommunityMember allows only owners and admins to invite users. A channel
 // or group membership is always scoped to the exact chat ID.
 func (s *Store) AddCommunityMember(ctx context.Context, chatID, actorID, targetID int64) error {
-	tag, err := s.Pool.Exec(ctx, `INSERT INTO chat_members(chat_id,user_id)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `INSERT INTO chat_members(chat_id,user_id)
 		SELECT $1,$3
 		WHERE EXISTS(SELECT 1 FROM chats WHERE id=$1 AND kind IN ('group','channel'))
 		  AND EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2 AND role IN ('owner','admin'))
 		  AND EXISTS(SELECT 1 FROM users WHERE id=$3)
 		ON CONFLICT(chat_id,user_id) DO NOTHING`, chatID, actorID, targetID)
-	if err != nil {
-		return norm(err)
-	}
+	if err != nil { return norm(err) }
 	if tag.RowsAffected() == 0 {
 		var permitted bool
-		if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(
 			SELECT 1 FROM chats c JOIN chat_members a ON a.chat_id=c.id
 			WHERE c.id=$1 AND c.kind IN ('group','channel')
 			  AND a.user_id=$2 AND a.role IN ('owner','admin')
-		)`, chatID, actorID).Scan(&permitted); err != nil {
-			return err
-		}
-		if !permitted {
-			return ErrNotFound
-		}
+		)`, chatID, actorID).Scan(&permitted); err != nil { return err }
+		if !permitted { return ErrNotFound }
 		var targetExists bool
-		if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)`, targetID).Scan(&targetExists); err != nil {
-			return err
-		}
-		if !targetExists {
-			return ErrNotFound
-		}
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)`, targetID).Scan(&targetExists); err != nil { return err }
+		if !targetExists { return ErrNotFound }
 		return ErrConflict
 	}
-	return nil
+	if err := insertRealtimeEvent(ctx, tx, chatID, actorID, "community.member_added", map[string]any{
+		"chat_id": chatID, "user_id": targetID,
+	}); err != nil { return err }
+	return tx.Commit(ctx)
 }
 
 func (s *Store) LeaveCommunityChat(ctx context.Context, chatID, userID int64) error {
-	tag, err := s.Pool.Exec(ctx, `DELETE FROM chat_members cm
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `DELETE FROM chat_members cm
 		WHERE cm.chat_id=$1 AND cm.user_id=$2
 		  AND EXISTS(SELECT 1 FROM chats c WHERE c.id=cm.chat_id AND c.kind IN ('group','channel'))
 		  AND cm.role <> 'owner'`, chatID, userID)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	if tag.RowsAffected() == 0 {
 		var owner bool
-		if err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2 AND role='owner')`, chatID, userID).Scan(&owner); err != nil {
-			return err
-		}
-		if owner {
-			return ErrConflict
-		}
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM chat_members WHERE chat_id=$1 AND user_id=$2 AND role='owner')`, chatID, userID).Scan(&owner); err != nil { return err }
+		if owner { return ErrConflict }
 		return ErrNotFound
 	}
-	return nil
+	if err := insertRealtimeEvent(ctx, tx, chatID, userID, "community.member_left", map[string]any{
+		"chat_id": chatID, "user_id": userID,
+	}); err != nil { return err }
+	return tx.Commit(ctx)
 }
 
 func (s *Store) SetCommunityMemberRole(ctx context.Context, chatID, ownerID, targetID int64, role string) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE chat_members target SET role=$4
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `UPDATE chat_members target SET role=$4
 		WHERE target.chat_id=$1 AND target.user_id=$3 AND target.role <> 'owner'
 		  AND EXISTS(SELECT 1 FROM chat_members actor WHERE actor.chat_id=$1 AND actor.user_id=$2 AND actor.role='owner')
 		  AND EXISTS(SELECT 1 FROM chats WHERE id=$1 AND kind IN ('group','channel'))`,
 		chatID, ownerID, targetID, role)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	if err != nil { return err }
+	if tag.RowsAffected() == 0 { return ErrNotFound }
+	if err := insertRealtimeEvent(ctx, tx, chatID, ownerID, "community.member_role_changed", map[string]any{
+		"chat_id": chatID, "user_id": targetID, "role": role,
+	}); err != nil { return err }
+	return tx.Commit(ctx)
 }
 
 func (s *Store) CommunityChat(ctx context.Context, chatID, viewerID int64) (CommunityChat, error) {
@@ -183,23 +184,66 @@ func (s *Store) TransferCommunityOwnership(ctx context.Context, chatID, ownerID,
 	tag, err = tx.Exec(ctx, `UPDATE chat_members SET role='owner' WHERE chat_id=$1 AND user_id=$2`, chatID, targetID)
 	if err != nil { return err }
 	if tag.RowsAffected() == 0 { return ErrNotFound }
+	if err := insertRealtimeEvent(ctx, tx, chatID, ownerID, "community.ownership_transferred", map[string]any{
+		"chat_id": chatID, "previous_owner_id": ownerID, "new_owner_id": targetID,
+	}); err != nil { return err }
 	return tx.Commit(ctx)
 }
 
  // JoinPublicCommunityChat joins a public group/channel by its public username.
  // Repeated requests are idempotent and do not create duplicate memberships.
 func (s *Store) JoinPublicCommunityChat(ctx context.Context, userID int64, username string) (int64, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return 0, err }
+	defer tx.Rollback(ctx)
+
 	var chatID int64
-	err := s.Pool.QueryRow(ctx, `INSERT INTO chat_members(chat_id,user_id)
-		SELECT id,$1 FROM chats
-		WHERE lower(username)=lower($2) AND is_public AND kind IN ('group','channel')
-		ON CONFLICT(chat_id,user_id) DO UPDATE SET joined_at=chat_members.joined_at
-		RETURNING chat_id`, userID, strings.TrimPrefix(strings.TrimSpace(username), "@")).Scan(&chatID)
-	return chatID, norm(err)
+	var joined bool
+	err = tx.QueryRow(ctx, `
+		WITH community AS (
+			SELECT id FROM chats
+			WHERE lower(username)=lower($2) AND is_public AND kind IN ('group','channel')
+		), membership AS (
+			INSERT INTO chat_members(chat_id,user_id)
+			SELECT id,$1 FROM community
+			ON CONFLICT(chat_id,user_id) DO NOTHING
+			RETURNING chat_id
+		)
+		SELECT community.id, EXISTS(SELECT 1 FROM membership)
+		FROM community
+	`, userID, strings.TrimPrefix(strings.TrimSpace(username), "@")).Scan(&chatID, &joined)
+	if err != nil { return 0, norm(err) }
+	if joined {
+		if err := insertRealtimeEvent(ctx, tx, chatID, userID, "community.member_joined", map[string]any{
+			"chat_id": chatID, "user_id": userID,
+		}); err != nil { return 0, err }
+	}
+	if err := tx.Commit(ctx); err != nil { return 0, err }
+	return chatID, nil
 }
 
- // RemoveCommunityMember enforces a strict hierarchy: admins can remove regular
+// RemoveCommunityMember enforces a strict hierarchy: admins can remove regular
  // members; only the owner can remove admins. No role can remove the owner.
+func (s *Store) RemoveCommunityMember(ctx context.Context, chatID, actorID, targetID int64) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `DELETE FROM chat_members target
+		USING chat_members actor, chats c
+		WHERE target.chat_id=$1 AND target.user_id=$3 AND target.user_id<>$2
+		  AND actor.chat_id=$1 AND actor.user_id=$2
+		  AND c.id=$1 AND c.kind IN ('group','channel')
+		  AND actor.role IN ('owner','admin')
+		  AND (actor.role='owner' OR target.role='member')`,
+		chatID, actorID, targetID)
+	if err != nil { return err }
+	if tag.RowsAffected() == 0 { return ErrNotFound }
+	if err := insertRealtimeEvent(ctx, tx, chatID, actorID, "community.member_removed", map[string]any{
+		"chat_id": chatID, "user_id": targetID,
+	}); err != nil { return err }
+	return tx.Commit(ctx)
+}
 func (s *Store) RemoveCommunityMember(ctx context.Context, chatID, actorID, targetID int64) error {
 	tag, err := s.Pool.Exec(ctx, `DELETE FROM chat_members target
 		USING chat_members actor, chats c
