@@ -17,9 +17,9 @@ type RealtimeEvent struct {
 	CreatedAt string          `json:"created_at"`
 }
 
-// insertRealtimeEvent must be called inside the same transaction as the
-// mutation. NOTIFY is transactional in PostgreSQL, so listeners are woken only
-// after the event and its originating mutation have committed.
+// insertRealtimeEvent must run in the same transaction as the originating
+// mutation. Updating the singleton counter row serializes event-producing
+// transactions until commit, making event IDs safe replay cursors.
 func insertRealtimeEvent(ctx context.Context, tx pgx.Tx, chatID, actorID int64, eventType string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -27,10 +27,17 @@ func insertRealtimeEvent(ctx context.Context, tx pgx.Tx, chatID, actorID int64, 
 	}
 	var id int64
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO realtime_events(chat_id, actor_id, event_type, payload)
-		VALUES($1, $2, $3, $4::jsonb)
-		RETURNING id
-	`, chatID, actorID, eventType, string(raw)).Scan(&id); err != nil {
+		UPDATE realtime_event_counters
+		SET last_id = last_id + 1
+		WHERE singleton = TRUE
+		RETURNING last_id
+	`).Scan(&id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO realtime_events(id, chat_id, actor_id, event_type, payload)
+		VALUES($1, $2, $3, $4, $5::jsonb)
+	`, id, chatID, actorID, eventType, string(raw)); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `SELECT pg_notify('kentgram_events', $1)`, fmt.Sprint(id))
@@ -38,8 +45,8 @@ func insertRealtimeEvent(ctx context.Context, tx pgx.Tx, chatID, actorID int64, 
 }
 
 // RealtimeBatch returns only events belonging to chats the user currently
-// belongs to. The global high-water mark lets clients advance over events from
-// other users' chats without exposing those events or getting stuck on gaps.
+// belongs to. The high-water mark allows clients to advance over inaccessible
+// events without revealing their contents or becoming stuck on cursor gaps.
 func (s *Store) RealtimeBatch(ctx context.Context, uid, afterID int64, limit int) ([]RealtimeEvent, int64, int64, error) {
 	if limit < 1 || limit > 200 {
 		limit = 100
