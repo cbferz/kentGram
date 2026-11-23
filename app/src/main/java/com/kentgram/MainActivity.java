@@ -49,8 +49,11 @@ public final class MainActivity extends Activity {
     private final HashSet<String> avatarLoading=new HashSet<>();
     private final HashMap<String,ArrayList<ImageView>> avatarTargets=new HashMap<>();
     private boolean onChatScreen=false, onNewChatScreen=false;
+    private RealtimeClient realtime;
+    private LinearLayout currentChatsList, activeMessages;
+    private ScrollView activeHistory;
 
-    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
+    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else{startRealtime();showChats();}}
 
     private void base(String title){
         root=new LinearLayout(this);
@@ -443,6 +446,7 @@ public final class MainActivity extends Activity {
             if(token.isEmpty()){toast("Сервер не вернул токен");return;}
             prefs.edit().putString("access_token",token)
                     .putString("refresh_token",r.optString("refresh_token","")).apply();
+            startRealtime();
             showChats();
         });
     }
@@ -450,6 +454,7 @@ public final class MainActivity extends Activity {
         onChatScreen=false;onNewChatScreen=false;
         activePeerUsername="";activePeerAvatarUrl="";
         currentChat=0;
+        activeMessages=null;activeHistory=null;currentChatsList=null;
         base("kentGram");
 
         TextView heading=label("Сообщения",18,TEXT,true);
@@ -486,6 +491,7 @@ public final class MainActivity extends Activity {
         section.addView(countHint);
         content.addView(section);
         LinearLayout chatsList=new LinearLayout(this);
+        currentChatsList=chatsList;
         chatsList.setOrientation(1);
         LinearLayout.LayoutParams clp=new LinearLayout.LayoutParams(-1,-2);
         clp.topMargin=dp(10);
@@ -727,6 +733,8 @@ public final class MainActivity extends Activity {
         ScrollView history=new ScrollView(this);
         history.setClipToPadding(false);
         LinearLayout messages=new LinearLayout(this);
+        activeMessages=messages;
+        activeHistory=history;
         messages.setOrientation(1);
         messages.setPadding(dp(12),dp(8),dp(12),dp(14));
         history.addView(messages);
@@ -1106,6 +1114,7 @@ public final class MainActivity extends Activity {
                     return;
                 }
                 if(code==401&&auth){
+                    stopRealtime();
                     prefs.edit().clear().apply();
                     token="";
                     showAuth();
@@ -1191,6 +1200,70 @@ public final class MainActivity extends Activity {
             });
         });
     }
+    private void startRealtime(){
+        if(token==null||token.isEmpty())return;
+        stopRealtime();
+        realtime=new RealtimeClient(this,token,new RealtimeClient.Listener(){
+            @Override public void onEvents(JSONArray events){
+                runOnUiThread(()->{
+                    if(isFinishing())return;
+                    boolean listChanged=false;
+                    HashSet<Long> changedChats=new HashSet<>();
+                    for(int i=0;i<events.length();i++){
+                        JSONObject event=events.optJSONObject(i);
+                        if(event==null)continue;
+                        String type=event.optString("type","");
+                        long chatId=event.optLong("chat_id",0);
+                        if("chat.created".equals(type)||"message.created".equals(type)||
+                                "message.deleted".equals(type)){
+                            listChanged=true;
+                            if(chatId>0)changedChats.add(chatId);
+                        }
+                    }
+                    if(listChanged&&!onChatScreen&&!onNewChatScreen&&currentChatsList!=null){
+                        refreshRealtimeChatList();
+                    }
+                    if(onChatScreen&&changedChats.contains(currentChat)&&
+                            activeMessages!=null&&activeHistory!=null){
+                        refreshMessages(currentChat,activeMessages,activeHistory);
+                    }
+                });
+            }
+            @Override public void onAuthExpired(){
+                runOnUiThread(()->{
+                    if(isFinishing())return;
+                    stopRealtime();
+                    prefs.edit().clear().apply();
+                    token="";
+                    showAuth();
+                    toast("Сеанс завершён. Войдите снова.");
+                });
+            }
+        });
+        realtime.start();
+    }
+
+    private void stopRealtime(){
+        if(realtime!=null){
+            realtime.stop();
+            realtime=null;
+        }
+    }
+
+    private void refreshRealtimeChatList(){
+        LinearLayout target=currentChatsList;
+        if(target==null)return;
+        requestGet("/chats",response->{
+            JSONArray fresh=response.optJSONArray("chats");
+            if(fresh!=null){
+                cachedChats=fresh;
+                if(target==currentChatsList&&!onChatScreen&&!onNewChatScreen){
+                    renderChats(target,fresh);
+                }
+            }
+        });
+    }
+
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
     private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(0xFF778397);e.setHint(hint);e.setTextSize(14);e.setPadding(dp(14),dp(10),dp(14),dp(10));e.setBackground(round(PANEL,15));e.setSingleLine(false);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
     private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setPadding(dp(18),dp(8),dp(18),dp(8));b.setBackground(round(ACCENT,28));b.setElevation(dp(2));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);b.setLayoutParams(p);return b;}
@@ -1204,5 +1277,6 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onDestroy(){
         if(clearHighlightTask!=null)uiHandler.removeCallbacks(clearHighlightTask);
+        stopRealtime();
         super.onDestroy();io.shutdown();}
 }
