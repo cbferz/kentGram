@@ -269,3 +269,23 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
 .poll-footer{display:flex;gap:8px;align-items:center;margin-top:12px}
 .poll-vote{min-width:130px}
 #create-poll-button{flex-shrink:0}
+
+/* Community controls */
+.list-heading-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.list-actions{display:flex;align-items:center;gap:4px}
+.list-actions .quiet-button{min-width:28px;padding:4px 7px;font-size:14px}
+#manage-members-button{flex-shrink:0}
+@media(max-width:640px){
+  #manage-members-button,#create-poll-button{padding:7px 8px;font-size:11px}
+  .chat-header .chat-title{min-width:0}
+}
+
+/* Profile settings and avatar upload */
+.profile-settings{padding:16px;margin-bottom:24px;border:1px solid #ffffff18;border-radius:16px;background:#111720}
+.profile-form{display:flex;flex-direction:column;gap:12px;max-width:560px}
+.profile-form label,.avatar-upload label{display:flex;flex-direction:column;gap:6px;color:#aeb8c8;font-size:12px}
+.profile-form input,.profile-form textarea{width:100%;border:1px solid #ffffff1c;border-radius:10px;background:#0b1018;color:#f4f6fa;padding:10px;font:inherit}
+.profile-form textarea{resize:vertical;min-height:74px}
+.avatar-upload{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin-top:14px}
+.avatar-upload input{max-width:100%;color:#aeb8c8}
+.avatar img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}
