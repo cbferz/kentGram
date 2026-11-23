@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5"
 )
 
 type MessageReaction struct {
@@ -104,4 +102,3 @@ func (s *Store) ToggleMessageReaction(ctx context.Context, chatID, messageID, us
 	return reactions, nil
 }
 
-var _ = pgx.ErrNoRows
