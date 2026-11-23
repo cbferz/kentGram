@@ -17,6 +17,7 @@ type API struct {
 	apiLimiter   *ipRateLimiter
 	authLimiter  *ipRateLimiter
 	loginLimiter *ipRateLimiter
+	realtimeSlots chan struct{}
 }
 
 func New(db *store.Store, cfg config.Config) *API {
@@ -27,6 +28,7 @@ func New(db *store.Store, cfg config.Config) *API {
 		apiLimiter: newIPRateLimiter(120, time.Minute),
 		authLimiter: newIPRateLimiter(10, time.Minute),
 		loginLimiter: newIPRateLimiter(10, 15*time.Minute),
+		realtimeSlots: make(chan struct{}, 64),
 	}
 }
 
