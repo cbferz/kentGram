@@ -76,6 +76,18 @@
     <section id="settings-panel" class="settings-panel hidden">
       <header class="chat-header"><button id="settings-back" class="icon-button" type="button" aria-label="Назад">←</button><div class="chat-title"><strong>Настройки</strong><span>Аккаунт и безопасность</span></div></header>
       <div class="settings-content">
+        <section class="profile-settings">
+          <h3>Профиль</h3>
+          <form id="profile-form" class="profile-form">
+            <label>Отображаемое имя<input id="profile-display-name" maxlength="64" autocomplete="name"></label>
+            <label>О себе<textarea id="profile-bio" maxlength="160" rows="3"></textarea></label>
+            <button class="primary" type="submit">Сохранить профиль</button>
+          </form>
+          <div class="avatar-upload">
+            <label>Аватар<input id="profile-avatar-file" type="file" accept="image/jpeg,image/png"></label>
+            <button id="upload-avatar-button" class="secondary" type="button">Загрузить фото</button>
+          </div>
+        </section>
         <h3>Активные сеансы</h3><p class="muted">Устройства, на которых выполнен вход в аккаунт.</p>
         <div id="web-sessions" class="session-list"></div>
         <button id="revoke-sessions" class="secondary wide" type="button">Завершить остальные сеансы</button>
