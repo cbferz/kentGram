@@ -17,10 +17,10 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 public final class KentDialog {
-    private static final int PANEL=0xFF151C27;
+    private static final int PANEL=0xFF151B25;
     private static final int TEXT=0xFFF4F7FB;
     private static final int MUTED=0xFF9AA9BC;
-    private static final int BLUE=0xFF2878C7;
+    private static final int BLUE=0xFF648DFF;
 
     private KentDialog() {}
 
@@ -31,9 +31,9 @@ public final class KentDialog {
         LinearLayout card = new LinearLayout(activity);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(activity, 22), dp(activity, 22), dp(activity, 22), dp(activity, 18));
-        card.setBackground(shape(PANEL, dp(activity, 26), 0xFF2A3749));
+        card.setBackground(shape(PANEL, dp(activity, 26), 0xFF2A3546));
 
-        TextView brand = text(activity, "KENTGRAM  /  УВЕДОМЛЕНИЕ", 10, 0xFF76A7FF, true);
+        TextView brand = text(activity, "KENTGRAM  /  УВЕДОМЛЕНИЕ", 10, 0xFF9AB5FF, true);
         card.addView(brand);
 
         TextView heading = text(activity, title, 20, TEXT, true);
@@ -89,7 +89,7 @@ public final class KentDialog {
         Dialog dialog = new Dialog(activity);
         TextView pill = text(activity, message, 13, TEXT, true);
         pill.setPadding(dp(activity, 20), dp(activity, 14), dp(activity, 20), dp(activity, 14));
-        pill.setBackground(shape(0xFF202A38, dp(activity, 30), 0xFF35465D));
+        pill.setBackground(shape(0xFF1A2230, dp(activity, 30), 0xFF35445B));
         dialog.setContentView(pill);
         dialog.setCancelable(false);
         Window window = dialog.getWindow();

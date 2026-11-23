@@ -99,7 +99,7 @@ type testUser struct {
 }
 
 func newName() string {
-	return fmt.Sprintf("u%d%d", time.Now().UnixNano()%1_000_000_000_000, userCounter.Add(1))
+	return fmt.Sprintf("u%d_%d", time.Now().UnixNano(), userCounter.Add(1))
 }
 
 func registerUser(t *testing.T, h http.Handler) testUser {
