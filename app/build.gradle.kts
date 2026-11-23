@@ -2,6 +2,10 @@ plugins {
     id("com.android.application")
 }
 
+dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}
+
 val ciKeystorePath = System.getenv("KENTGRAM_KEYSTORE_PATH")
 val ciKeystorePassword = System.getenv("KENTGRAM_KEYSTORE_PASSWORD")
 val ciKeyAlias = System.getenv("KENTGRAM_KEY_ALIAS")
