@@ -46,6 +46,12 @@ func Open(ctx context.Context, url string) (*Store, error) {
 
 func (s *Store) Close() { s.Pool.Close() }
 
+// OpenListener creates a dedicated PostgreSQL connection for LISTEN/NOTIFY.
+// Long-lived WebSockets must not occupy the bounded query pool.
+func (s *Store) OpenListener(ctx context.Context) (*pgx.Conn, error) {
+	return pgx.ConnectConfig(ctx, s.Pool.Config().ConnConfig.Copy())
+}
+
 // norm maps driver errors onto the package's sentinel errors.
 func norm(err error) error {
 	if err == nil || errors.Is(err, pgx.ErrNoRows) {
