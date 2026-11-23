@@ -2,13 +2,13 @@ name: Web client checks
 
 on:
   push:
-    branches: [main, feat/opengram-inspired-expansion]
+    branches: [main, feat/opengram-inspired-expansion, feat/kentgram-web-optimization]
     paths:
       - "web/**"
       - ".github/workflows/web.yml"
       - "docker-compose.yml"
   pull_request:
-    branches: [main]
+    branches: [main, feat/opengram-inspired-expansion]
     paths:
       - "web/**"
       - ".github/workflows/web.yml"
