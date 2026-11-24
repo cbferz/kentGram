@@ -36,7 +36,7 @@ permissions:
 jobs:
   android:
     name: Build Android APK
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       KENTGRAM_KEYSTORE_BASE64: ${{ secrets.KENTGRAM_KEYSTORE_BASE64 }}
