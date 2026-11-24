@@ -24,6 +24,10 @@ final class SystemBars {
     /** Call once in onCreate, before or after setContentView. */
     static void apply(Activity activity,int background){
         Window window=activity.getWindow();
+        // Install the decor view first: before setContentView it does not exist
+        // yet, and Window.getInsetsController() then throws a
+        // NullPointerException on Android 11+.
+        View decor=window.getDecorView();
         window.setBackgroundDrawable(new ColorDrawable(background));
         if(Build.VERSION.SDK_INT<Build.VERSION_CODES.R){
             // Before Android 11 the decor view already insets the content and
@@ -39,7 +43,7 @@ final class SystemBars {
         }
         window.setStatusBarContrastEnforced(false);
         window.setNavigationBarContrastEnforced(false);
-        WindowInsetsController controller=window.getInsetsController();
+        WindowInsetsController controller=decor.getWindowInsetsController();
         if(controller!=null){
             // Light icons on the dark background.
             controller.setSystemBarsAppearance(0,
@@ -48,7 +52,7 @@ final class SystemBars {
         }
         // android.R.id.content survives every setContentView call, so one
         // listener covers all screens the activity swaps in.
-        View content=activity.findViewById(android.R.id.content);
+        View content=decor.findViewById(android.R.id.content);
         content.setOnApplyWindowInsetsListener((view,insets)->{
             Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|
                     WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());
