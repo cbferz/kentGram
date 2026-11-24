@@ -37,13 +37,18 @@ import java.util.HashSet;
 import java.util.UUID;
 
 public final class MainActivity extends Activity {
-    private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
+    private static final String API=Session.API;
     private static final int BG=0xFF090B10,PANEL=0xFF121720,TEXT=0xFFF4F6FA,MUTED=0xFF8994A6,ACCENT=0xFF648DFF,PANEL_ALT=0xFF1A2230;
+    private static final long REALTIME_MIN_BACKOFF_MS=3000, REALTIME_MAX_BACKOFF_MS=60000;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private OkHttpClient realtimeHttp;
     private volatile WebSocket realtimeSocket;
     private volatile boolean realtimeConnecting=false, realtimeReconnectScheduled=false;
-    private volatile boolean realtimeSyncInFlight=false, refreshingAccessToken=false;
+    private volatile boolean realtimeSyncInFlight=false;
+    private volatile long realtimeBackoffMs=REALTIME_MIN_BACKOFF_MS;
+    /** Identifies the current socket attempt; callbacks of older attempts are ignored. */
+    private volatile int realtimeAttempt=0;
+    private boolean onAuthScreen=false;
     private Runnable realtimeReconnectTask;
     private LinearLayout activeMessages, activeChatsList;
     private ScrollView activeHistory;
@@ -51,7 +56,6 @@ public final class MainActivity extends Activity {
     private String activeChatSubtitle="";
     private long lastTypingSentAt=0;
     private SharedPreferences prefs;
-    private String token="";
     private LinearLayout root,content,top,navBar;
     private EditText composer;
     private LinearLayout replyPreview;
@@ -80,7 +84,23 @@ public final class MainActivity extends Activity {
     private final HashMap<String,ArrayList<ImageView>> avatarTargets=new HashMap<>();
     private boolean onChatScreen=false, onNewChatScreen=false;
 
-    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(BG));getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
+    @Override public void onCreate(Bundle state){
+        super.onCreate(state);
+        SystemBars.apply(this,BG);
+        getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+        prefs=getSharedPreferences(Session.PREFS,MODE_PRIVATE);
+        if(Session.isSignedIn(this))showChats();
+        else showAuth();
+    }
+
+    @Override protected void onResume(){
+        super.onResume();
+        // Reconnect promptly after the app returns from the background.
+        if(!onAuthScreen&&Session.isSignedIn(this)){
+            realtimeBackoffMs=REALTIME_MIN_BACKOFF_MS;
+            ensureRealtimeConnected();
+        }
+    }
 
     private void base(String title){
         activeChatsList=null;
@@ -331,9 +351,7 @@ public final class MainActivity extends Activity {
 
     private void showSettings(){
         base("Настройки");
-        TextView heading=label("АККАУНТ",11,MUTED,true);
-        heading.setLetterSpacing(.12f);
-        content.addView(heading);
+        content.addView(sectionHeader("АККАУНТ",true));
 
         LinearLayout profileCard=new LinearLayout(this);
         profileCard.setGravity(Gravity.CENTER_VERTICAL);
@@ -353,10 +371,7 @@ public final class MainActivity extends Activity {
         content.addView(profileCard);
         profileCard.setOnClickListener(v->startActivity(new Intent(this,ProfileActivity.class)));
 
-        TextView security=label("БЕЗОПАСНОСТЬ",10,MUTED,true);
-        security.setLetterSpacing(.12f);
-        security.setPadding(dp(2),dp(22),0,dp(9));
-        content.addView(security);
+        content.addView(sectionHeader("БЕЗОПАСНОСТЬ",false));
 
         LinearLayout sessionsCard=new LinearLayout(this);
         sessionsCard.setOrientation(1);
@@ -401,10 +416,7 @@ public final class MainActivity extends Activity {
                 }));
         loadSessions(sessionList);
 
-        TextView general=label("ПРИЛОЖЕНИЕ",10,MUTED,true);
-        general.setLetterSpacing(.12f);
-        general.setPadding(dp(2),dp(22),0,dp(9));
-        content.addView(general);
+        content.addView(sectionHeader("ПРИЛОЖЕНИЕ",false));
         LinearLayout logoutCard=new LinearLayout(this);
         logoutCard.setGravity(Gravity.CENTER_VERTICAL);
         logoutCard.setPadding(dp(14),dp(14),dp(14),dp(14));
@@ -414,10 +426,9 @@ public final class MainActivity extends Activity {
         logoutCard.addView(label("↗",18,0xFFFF8995,true));
         content.addView(logoutCard);
         logoutCard.setOnClickListener(v->KentDialog.showMessage(this,"Выйти из аккаунта?","Тебе потребуется снова войти, чтобы пользоваться kentGram.","Выйти",()->{
-            request("/auth/logout",new JSONObject(),true,r->{});
-            prefs.edit().clear().apply();
-            token="";
-            stopRealtime();
+            String access=Session.accessToken(this),refreshToken=Session.refreshToken(this);
+            signOutLocally();
+            background(()->Session.revoke(access,refreshToken));
             showAuth();
         }));
     }
@@ -480,6 +491,9 @@ public final class MainActivity extends Activity {
 
     private void showAuth(){
         stopRealtime();
+        onAuthScreen=true;
+        onChatScreen=false;onNewChatScreen=false;
+        currentChat=0;
         base("kentGram");
         if(navBar!=null)root.removeView(navBar);
         content.setPadding(dp(20),dp(24),dp(20),dp(28));
@@ -580,14 +594,13 @@ public final class MainActivity extends Activity {
             if(email!=null)b.put("email",email.trim());
         }catch(Exception ignored){}
         request(email==null?"/auth/login":"/auth/register",b,false,r->{
-            token=r.optString("access_token","");
-            if(token.isEmpty()){toast("Сервер не вернул токен");return;}
-            prefs.edit().putString("access_token",token)
-                    .putString("refresh_token",r.optString("refresh_token","")).apply();
+            signOutLocally();
+            if(!Session.signIn(this,r)){toast("Сервер не вернул токен");return;}
             showChats();
         });
     }
     private void showChats(){
+        onAuthScreen=false;
         ensureRealtimeConnected();
         onChatScreen=false;onNewChatScreen=false;
         activePeerUsername="";activePeerAvatarUrl="";
@@ -1263,55 +1276,15 @@ public final class MainActivity extends Activity {
                 row.setTag(Long.valueOf(messageId));
                 row.setOrientation(1);
                 row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
+                int maxBubbleWidth=(int)(getResources().getDisplayMetrics().widthPixels*.74f);
 
-                if(!mediaUrl.isEmpty()&&mediaMime.startsWith("image/")){
-                    ImageView attachment=new ImageView(this);
-                    attachment.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                    attachment.setBackground(round(0xFF202A39,14));
-                    attachment.setClipToOutline(true);
-                    LinearLayout.LayoutParams attachmentParams=new LinearLayout.LayoutParams(dp(236),dp(176));
-                    attachmentParams.setMargins(dp(2),dp(5),dp(2),dp(4));
-                    row.addView(attachment,attachmentParams);
-                    loadChatMedia(attachment,API+mediaUrl);
-                    attachment.setOnClickListener(v->showChatImage(API+mediaUrl));
-                }else if(!mediaUrl.isEmpty()){
-                    TextView attachment=label("📄  "+(mediaName.isEmpty()?body:mediaName)+"\nФайл · "+formatBytes(m.optLong("media_size",0)),13,TEXT,true);
-                    attachment.setPadding(dp(13),dp(12),dp(13),dp(12));
-                    attachment.setBackground(round(PANEL_ALT,13));
-                    row.addView(attachment,new LinearLayout.LayoutParams(-1,-2));
-                }
-
-                long forwardedMessageId=m.optLong("forwarded_from_message_id",0);
-                if(forwardedMessageId>0){
-                    String from=m.optString("forwarded_from_username","");
-                    TextView forwarded=label("Переслано от "+(from.isEmpty()?"пользователя":"@"+from),11,0xFF9AB5FF,true);
-                    forwarded.setPadding(dp(5),dp(4),dp(5),dp(1));
-                    row.addView(forwarded);
-                }
-
-                long replyId=m.optLong("reply_to_message_id",0);
-                String quoted=m.optString("reply_to_body","");
-                String quotedSender=m.optString("reply_to_sender_username","");
-                if(replyId>0){
-                    TextView quote=label((quotedSender.isEmpty()?"Ответ на сообщение":"Ответ на @"+quotedSender)+"\n"+
-                            (quoted.isEmpty()?"Сообщение недоступно":quoted),11,0xFFB8C7DD,false);
-                    quote.setPadding(dp(11),dp(8),dp(11),dp(8));
-                    quote.setBackground(round(0xFF202A39,12));
-                    LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(-2,-2);
-                    qp.setMargins(dp(2),dp(5),dp(2),0);
-                    row.addView(quote,qp);
-                    quote.setOnClickListener(v->scrollToMessage(messages,history,replyId));
-                }
-
-                TextView bubble=label(body,15,mine?Color.WHITE:TEXT,false);
-                bubble.setLineSpacing(dp(2),1.02f);
-                bubble.setMaxWidth((int)(getResources().getDisplayMetrics().widthPixels*.78f));
-                bubble.setPadding(dp(14),dp(10),dp(14),dp(10));
-                bubble.setBackground(round(mine?0xFF315DA8:0xFF1B222D,mine?18:18));
-                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);
-                p.setMargins(dp(2),dp(4),dp(2),dp(4));
+                // Incoming messages: [avatar][column]. Everything that belongs to the
+                // message lives in the column so it lines up with the bubble.
                 LinearLayout messageLine=new LinearLayout(this);
-                messageLine.setGravity(Gravity.CENTER_VERTICAL|(mine?Gravity.RIGHT:Gravity.LEFT));
+                messageLine.setGravity(Gravity.BOTTOM|(mine?Gravity.RIGHT:Gravity.LEFT));
+                LinearLayout column=new LinearLayout(this);
+                column.setOrientation(1);
+                column.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
                 if(!mine){
                     ImageView senderAvatar=new ImageView(this);
                     senderAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -1319,18 +1292,79 @@ public final class MainActivity extends Activity {
                     senderAvatar.setBackground(round(0xFF283957,50));
                     senderAvatar.setClipToOutline(true);
                     LinearLayout.LayoutParams avatarParams=new LinearLayout.LayoutParams(dp(29),dp(29));
-                    avatarParams.setMargins(0,0,dp(7),0);
+                    avatarParams.setMargins(0,0,dp(7),dp(4));
                     messageLine.addView(senderAvatar,avatarParams);
                     loadChatAvatar(senderAvatar,activePeerAvatarUrl);
                 }
-                messageLine.addView(bubble,p);
+                messageLine.addView(column,new LinearLayout.LayoutParams(-2,-2));
                 row.addView(messageLine,new LinearLayout.LayoutParams(-1,-2));
+
+                long forwardedMessageId=m.optLong("forwarded_from_message_id",0);
+                if(forwardedMessageId>0){
+                    String from=m.optString("forwarded_from_username","");
+                    TextView forwarded=label("Переслано от "+(from.isEmpty()?"пользователя":"@"+from),11,0xFF9AB5FF,true);
+                    forwarded.setPadding(dp(5),dp(4),dp(5),dp(1));
+                    column.addView(forwarded);
+                }
+
+                long replyId=m.optLong("reply_to_message_id",0);
+                String quoted=m.optString("reply_to_body","");
+                String quotedSender=m.optString("reply_to_sender_username","");
+                if(replyId>0){
+                    TextView quote=label((quotedSender.isEmpty()?"Ответ на сообщение":"Ответ на @"+quotedSender)+"\n"+
+                            (quoted.isEmpty()?"Сообщение недоступно":quoted),12,0xFFB8C7DD,false);
+                    quote.setMaxLines(3);
+                    quote.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                    quote.setMaxWidth(maxBubbleWidth);
+                    quote.setPadding(dp(11),dp(7),dp(11),dp(7));
+                    quote.setBackground(round(0xFF202A39,12));
+                    LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(-2,-2);
+                    qp.setMargins(dp(2),dp(5),dp(2),0);
+                    column.addView(quote,qp);
+                    quote.setOnClickListener(v->scrollToMessage(messages,history,replyId));
+                }
+
+                View attachmentView=null;
+                if(!mediaUrl.isEmpty()&&mediaMime.startsWith("image/")){
+                    ImageView attachment=new ImageView(this);
+                    attachment.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                    attachment.setBackground(round(0xFF202A39,14));
+                    attachment.setClipToOutline(true);
+                    LinearLayout.LayoutParams attachmentParams=new LinearLayout.LayoutParams(
+                            Math.min(dp(236),maxBubbleWidth),dp(176));
+                    attachmentParams.setMargins(dp(2),dp(5),dp(2),dp(2));
+                    column.addView(attachment,attachmentParams);
+                    loadChatMedia(attachment,API+mediaUrl);
+                    attachment.setOnClickListener(v->showChatImage(API+mediaUrl));
+                    attachmentView=attachment;
+                }else if(!mediaUrl.isEmpty()){
+                    TextView attachment=label("📄  "+(mediaName.isEmpty()?body:mediaName)+"\nФайл · "+formatBytes(m.optLong("media_size",0)),13,TEXT,true);
+                    attachment.setMaxWidth(maxBubbleWidth);
+                    attachment.setPadding(dp(13),dp(12),dp(13),dp(12));
+                    attachment.setBackground(round(PANEL_ALT,13));
+                    LinearLayout.LayoutParams attachmentParams=new LinearLayout.LayoutParams(-2,-2);
+                    attachmentParams.setMargins(dp(2),dp(5),dp(2),dp(2));
+                    column.addView(attachment,attachmentParams);
+                    attachmentView=attachment;
+                }
+
+                TextView bubble=label(body,15,mine?Color.WHITE:TEXT,false);
+                bubble.setLineSpacing(dp(2),1.02f);
+                bubble.setMaxWidth(maxBubbleWidth);
+                bubble.setPadding(dp(14),dp(10),dp(14),dp(10));
+                bubble.setBackground(round(mine?0xFF315DA8:0xFF1B222D,18));
+                LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);
+                p.setMargins(dp(2),dp(4),dp(2),dp(4));
+                // A photo without a caption is shown on its own, without an empty bubble.
+                boolean hasText=!body.trim().isEmpty()&&!(attachmentView!=null&&body.equals(mediaName));
+                if(hasText||attachmentView==null)column.addView(bubble,p);
+                View pressTarget=hasText||attachmentView==null?bubble:attachmentView;
 
                 String editedAt=m.optString("edited_at","");
                 if(!editedAt.isEmpty()){
                     TextView edited=label("изменено",10,MUTED,false);
-                    edited.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
-                    row.addView(edited,new LinearLayout.LayoutParams(-1,-2));
+                    edited.setPadding(dp(6),0,dp(6),0);
+                    column.addView(edited);
                 }
 
                 JSONArray reactions=m.optJSONArray("reactions");
@@ -1353,7 +1387,7 @@ public final class MainActivity extends Activity {
                         reactionRow.addView(chip,chipParams);
                         chip.setOnClickListener(v->sendMessageReaction(id,messageId,emoji,messages,history));
                     }
-                    if(reactionRow.getChildCount()>0)row.addView(reactionRow,new LinearLayout.LayoutParams(-1,-2));
+                    if(reactionRow.getChildCount()>0)column.addView(reactionRow,new LinearLayout.LayoutParams(-2,-2));
                 }
 
                 if(mine&&activePeerID>0){
@@ -1363,8 +1397,8 @@ public final class MainActivity extends Activity {
                     receipt.setTag(Long.valueOf(messageId));
                     row.addView(receipt,new LinearLayout.LayoutParams(-1,-2));
                 }
-                bubble.setOnLongClickListener(v->{
-                    MessageActionMenu.show(this,bubble,body,mine,mine,
+                pressTarget.setOnLongClickListener(v->{
+                    MessageActionMenu.show(this,pressTarget,body,mine,mine,
                             ()->confirmDeleteMessage(id,messageId,messages,history),
                             ()->setReply(messageId,body,m.optString("sender_username","")),
                             ()->showEditMessage(id,messageId,body,messages,history),
@@ -1792,8 +1826,20 @@ public final class MainActivity extends Activity {
             });
     }
     private void ensureRealtimeConnected(){
-        if(token.isEmpty()||realtimeSocket!=null||realtimeConnecting)return;
+        if(isDestroyed()||!Session.isSignedIn(this)||realtimeSocket!=null||realtimeConnecting)return;
         realtimeConnecting=true;
+        // Fetching a usable token may refresh it over the network.
+        if(!background(()->{
+            String access=Session.usableAccessToken(this);
+            runOnUiThread(()->openRealtimeSocket(access));
+        }))realtimeConnecting=false;
+    }
+
+    private void openRealtimeSocket(String access){
+        if(isDestroyed()||access.isEmpty()||!Session.isSignedIn(this)||realtimeSocket!=null){
+            realtimeConnecting=false;
+            return;
+        }
         if(realtimeHttp==null){
             realtimeHttp=new OkHttpClient.Builder()
                     .readTimeout(0,TimeUnit.MILLISECONDS)
@@ -1802,29 +1848,36 @@ public final class MainActivity extends Activity {
         }
         Request request=new Request.Builder()
                 .url(API.replace("https://","wss://")+"/realtime")
-                .header("Authorization","Bearer "+token)
+                .header("Authorization","Bearer "+access)
                 .build();
+        final int attempt=++realtimeAttempt;
         realtimeSocket=realtimeHttp.newWebSocket(request,new WebSocketListener(){
             @Override public void onOpen(WebSocket socket,Response response){
+                if(attempt!=realtimeAttempt){socket.close(1000,"superseded");return;}
                 realtimeConnecting=false;
                 realtimeSocket=socket;
                 realtimeReconnectScheduled=false;
-                syncRealtimeEvents();
-                sendRealtimePresenceSubscribe(currentChat);
+                realtimeBackoffMs=REALTIME_MIN_BACKOFF_MS;
+                runOnUiThread(()->{
+                    syncRealtimeEvents();
+                    sendRealtimePresenceSubscribe(currentChat);
+                });
             }
             @Override public void onMessage(WebSocket socket,String text){
-                handleRealtimeEvent(text);
+                if(attempt==realtimeAttempt)handleRealtimeEvent(text);
             }
             @Override public void onClosed(WebSocket socket,int code,String reason){
-                if(realtimeSocket==socket)realtimeSocket=null;
+                if(attempt!=realtimeAttempt)return;
+                realtimeSocket=null;
                 realtimeConnecting=false;
                 scheduleRealtimeReconnect();
             }
             @Override public void onFailure(WebSocket socket,Throwable error,Response response){
-                if(realtimeSocket==socket)realtimeSocket=null;
+                if(attempt!=realtimeAttempt)return;
+                realtimeSocket=null;
                 realtimeConnecting=false;
                 if(response!=null&&response.code()==401){
-                    refreshRealtimeSession();
+                    refreshRealtimeSession(access);
                 }else{
                     scheduleRealtimeReconnect();
                 }
@@ -1833,20 +1886,13 @@ public final class MainActivity extends Activity {
     }
 
     private void syncRealtimeEvents(){
-        if(token.isEmpty()||prefs==null||realtimeSyncInFlight)return;
+        if(!Session.isSignedIn(this)||prefs==null||realtimeSyncInFlight)return;
         realtimeSyncInFlight=true;
         long since=prefs.getLong("realtime_cursor",0L);
         requestMethod("GET","/realtime/events?since="+since,null,true,result->{
             realtimeSyncInFlight=false;
             JSONArray events=result.optJSONArray("events");
-            boolean changed=false;
-            if(events!=null){
-                for(int i=0;i<events.length();i++){
-                    JSONObject event=events.optJSONObject(i);
-                    if(event==null)continue;
-                    changed=true;
-                }
-            }
+            boolean changed=events!=null&&events.length()>0;
             long cursor=Math.max(since,result.optLong("cursor",since));
             prefs.edit().putLong("realtime_cursor",cursor).apply();
             if(events!=null&&events.length()>=100){
@@ -1866,63 +1912,57 @@ public final class MainActivity extends Activity {
                     });
                 }
             }
-        },(error,status)->{
-            realtimeSyncInFlight=false;
-            if(status==401)refreshRealtimeSession();
+        },(error,status)->realtimeSyncInFlight=false);
+    }
+
+    /** The realtime handshake was rejected with {@code staleAccess}: refresh it and reconnect. */
+    private void refreshRealtimeSession(String staleAccess){
+        int startGeneration=Session.generation();
+        background(()->{
+            Session.Refresh outcome=Session.refresh(this,staleAccess,startGeneration);
+            runOnUiThread(()->{
+                if(outcome==Session.Refresh.REJECTED)expireLocalSession();
+                else if(outcome==Session.Refresh.REFRESHED)ensureRealtimeConnected();
+                else scheduleRealtimeReconnect();
+            });
         });
     }
 
-    private void refreshRealtimeSession(){
-        if(token.isEmpty()||prefs==null)return;
-        if(refreshingAccessToken)return;
-        String refreshToken=prefs.getString("refresh_token","");
-        if(refreshToken.isEmpty()){
-            expireLocalSession();
-            return;
-        }
-        refreshingAccessToken=true;
-        JSONObject body=new JSONObject();
-        try{body.put("refresh_token",refreshToken);}catch(JSONException ignored){}
-        requestMethod("POST","/auth/refresh",body,false,result->{
-            refreshingAccessToken=false;
-            String nextAccess=result.optString("access_token","");
-            String nextRefresh=result.optString("refresh_token",refreshToken);
-            if(nextAccess.isEmpty()){
-                expireLocalSession();
-                return;
-            }
-            token=nextAccess;
-            prefs.edit().putString("access_token",nextAccess)
-                    .putString("refresh_token",nextRefresh).apply();
-            ensureRealtimeConnected();
-        },(error,status)->{
-            refreshingAccessToken=false;
-            if(status==401||status==403){
-                expireLocalSession();
-            }else{
-                scheduleRealtimeReconnect();
-            }
-        });
+    /** Drops the local session and everything cached for the signed-in account. */
+    private void signOutLocally(){
+        Session.clear(this);
+        stopRealtime();
+        cachedChats=null;
+        sendQueues.clear();
+        replyQueues.clear();
+        sendingChats.clear();
+        avatarCache.clear();
+        mediaCache.clear();
+        replyToMessageId=0;replyToBody="";replyToSender="";
+        activePeerID=0;activePeerReadCursor=0;
     }
 
+    /** The server rejected the refresh token: the user has to sign in again. */
     private void expireLocalSession(){
         runOnUiThread(()->{
-            if(prefs!=null)prefs.edit().clear().apply();
-            token="";
-            stopRealtime();
+            if(isDestroyed()||onAuthScreen)return;
+            signOutLocally();
             showAuth();
             toast("Сессия завершена. Войдите снова.");
         });
     }
 
     private void scheduleRealtimeReconnect(){
-        if(token.isEmpty()||realtimeReconnectScheduled)return;
+        if(isDestroyed()||!Session.isSignedIn(this)||realtimeReconnectScheduled)return;
         realtimeReconnectScheduled=true;
-        realtimeReconnectTask=()->{
+        long delay=realtimeBackoffMs;
+        realtimeBackoffMs=Math.min(REALTIME_MAX_BACKOFF_MS,realtimeBackoffMs*2);
+        Runnable task=()->{
             realtimeReconnectScheduled=false;
             ensureRealtimeConnected();
         };
-        uiHandler.postDelayed(realtimeReconnectTask,3000);
+        realtimeReconnectTask=task;
+        uiHandler.postDelayed(task,delay);
     }
 
     private void stopRealtime(){
@@ -1930,10 +1970,12 @@ public final class MainActivity extends Activity {
         realtimeReconnectTask=null;
         realtimeReconnectScheduled=false;
         realtimeConnecting=false;
-        if(realtimeSocket!=null){
-            realtimeSocket.close(1000,"client closing");
-            realtimeSocket=null;
-        }
+        realtimeSyncInFlight=false;
+        realtimeBackoffMs=REALTIME_MIN_BACKOFF_MS;
+        realtimeAttempt++;
+        WebSocket socket=realtimeSocket;
+        realtimeSocket=null;
+        if(socket!=null)socket.close(1000,"client closing");
         if(realtimeHttp!=null){
             realtimeHttp.dispatcher().executorService().shutdown();
             realtimeHttp.connectionPool().evictAll();
@@ -2031,27 +2073,18 @@ public final class MainActivity extends Activity {
     }
 
     private void uploadChatMedia(long chatId,Uri uri,String caption,LinearLayout messages,ScrollView history){
-        io.execute(()->{
-            HttpURLConnection connection=null;
-            int status=0;
-            JSONObject response=new JSONObject();
-            try{
-                String boundary="----kentgram-"+UUID.randomUUID().toString().replace("-","");
-                String fileName=queryDisplayName(uri);
-                String contentType=getContentResolver().getType(uri);
-                if(contentType==null)contentType="application/octet-stream";
-                connection=(HttpURLConnection)new URL(API+"/chats/"+chatId+"/media").openConnection();
-                connection.setRequestMethod("POST");
-                connection.setConnectTimeout(15000);
-                connection.setReadTimeout(60000);
-                connection.setDoOutput(true);
+        background(()->{
+            String boundary="----kentgram-"+UUID.randomUUID().toString().replace("-","");
+            String fileName=queryDisplayName(uri);
+            String type=getContentResolver().getType(uri);
+            final String contentType=type==null?"application/octet-stream":type;
+            String safeName=fileName.replace("\\","_").replace("\"","_").replace("\r","").replace("\n","");
+            // The writer reopens the file, so the upload can be retried after a token refresh.
+            Session.BodyWriter multipart=connection->{
                 connection.setChunkedStreamingMode(8192);
-                connection.setRequestProperty("Authorization","Bearer "+token);
-                connection.setRequestProperty("Accept","application/json");
                 connection.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
                 try(OutputStream output=connection.getOutputStream()){
                     writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n"+caption+"\r\n");
-                    String safeName=fileName.replace("\\","_").replace("\"","_").replace("\r","").replace("\n","");
                     writeMultipart(output,"--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\""+safeName+"\"\r\nContent-Type: "+contentType+"\r\n\r\n");
                     try(InputStream input=getContentResolver().openInputStream(uri)){
                         if(input==null)throw new IOException("Unable to open selected file");
@@ -2061,36 +2094,22 @@ public final class MainActivity extends Activity {
                     }
                     writeMultipart(output,"\r\n--"+boundary+"--\r\n");
                 }
-                status=connection.getResponseCode();
-                InputStream input=status>=200&&status<300?connection.getInputStream():connection.getErrorStream();
-                if(input!=null){
-                    ByteArrayOutputStream bytes=new ByteArrayOutputStream();
-                    byte[] buffer=new byte[4096];
-                    int count;
-                    while((count=input.read(buffer))!=-1)bytes.write(buffer,0,count);
-                    try{response=new JSONObject(bytes.toString("UTF-8"));}catch(JSONException ignored){}
-                    input.close();
-                }
-            }catch(Exception error){
-                try{response.put("error","media_upload_failed");}catch(JSONException ignored){}
-            }finally{
-                if(connection!=null)connection.disconnect();
-            }
-            final int resultCode=status;
-            final JSONObject result=response;
+            };
+            Session.Result result=Session.call(this,"POST","/chats/"+chatId+"/media",multipart,true,15000,60000);
             runOnUiThread(()->{
-                if(resultCode>=200&&resultCode<300){
+                pendingMediaChatId=0;
+                pendingMediaCaption="";
+                pendingMediaMessages=null;
+                pendingMediaHistory=null;
+                if(result.sessionLost){expireLocalSession();return;}
+                if(result.ok()){
                     if(currentChat==chatId&&messages!=null&&history!=null)refreshMessages(chatId,messages,history);
                     if(currentChat==chatId&&composer!=null&&composer.getText().toString().trim().equals(caption))
                         composer.setText("");
                     toast("Файл отправлен");
                 }else{
-                    toast(result.optString("error","Не удалось отправить файл")+" ("+resultCode+")");
+                    toast(result.body.optString("error","Не удалось отправить файл")+" ("+result.status+")");
                 }
-                pendingMediaChatId=0;
-                pendingMediaCaption="";
-                pendingMediaMessages=null;
-                pendingMediaHistory=null;
             });
         });
     }
@@ -2120,108 +2139,42 @@ public final class MainActivity extends Activity {
     }
     private void requestMethod(String method,String path,JSONObject body,boolean auth,
                                Done done,Failed failed){
-        io.execute(()->{
-            JSONObject out=new JSONObject();
-            int status=0;
-            try{
-                HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();
-                c.setRequestMethod(method);
-                c.setConnectTimeout(12000);
-                c.setReadTimeout(12000);
-                c.setRequestProperty("Accept","application/json");
-                if(auth&&!token.isEmpty())
-                    c.setRequestProperty("Authorization","Bearer "+token);
-                if(body!=null){
-                    c.setDoOutput(true);
-                    c.setRequestProperty("Content-Type","application/json");
-                    try(OutputStream stream=c.getOutputStream()){
-                        stream.write(body.toString().getBytes(StandardCharsets.UTF_8));
-                    }
-                }
-                status=c.getResponseCode();
-                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
-                if(in!=null){
-                    ByteArrayOutputStream bytes=new ByteArrayOutputStream();
-                    byte[] buffer=new byte[4096];
-                    int count;
-                    while((count=in.read(buffer))>0)bytes.write(buffer,0,count);
-                    try{
-                        out=new JSONObject(bytes.toString("UTF-8"));
-                    }catch(JSONException parseError){
-                        out=new JSONObject();
-                        out.put("error",status==404?"endpoint_not_found":
-                                status>=500?"server_error":"http_error");
-                    }
-                }
-                c.disconnect();
-            }catch(Exception e){
-                try{out.put("error","connection_failed");}
-                catch(Exception ignored){}
-            }
-
-            final JSONObject result=out;
-            final int code=status;
+        background(()->{
+            Session.Result result=Session.call(this,method,path,body,auth);
             runOnUiThread(()->{
-                if(code>=200&&code<300){
-                    if(done!=null)done.accept(result);
+                if(isDestroyed())return;
+                if(result.ok()){
+                    if(done!=null)done.accept(result.body);
                     return;
                 }
-                if(code==401&&auth){
-                    prefs.edit().clear().apply();
-                    token="";
-                    showAuth();
-                    toast("Войдите снова");
+                if(result.sessionLost){
+                    expireLocalSession();
                     return;
                 }
                 if(failed!=null){
-                    failed.accept(result,code);
+                    failed.accept(result.body,result.status);
                     return;
                 }
                 KentDialog.showMessage(this,
-                        code==404?"Маршрут не найден":"Не удалось выполнить запрос",
-                        result.optString("error","Ошибка соединения")+" ("+code+")",
+                        result.status==404?"Маршрут не найден":"Не удалось выполнить запрос",
+                        result.body.optString("error","Ошибка соединения")+" ("+result.status+")",
                         "Понятно",null);
             });
         });
     }
     private void requestDelete(String path,Done done){
-        io.execute(()->{
-            JSONObject out=new JSONObject();
-            int status=0;
-            try{
-                HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();
-                c.setRequestMethod("DELETE");
-                c.setConnectTimeout(12000);
-                c.setReadTimeout(12000);
-                c.setRequestProperty("Accept","application/json");
-                if(!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);
-                status=c.getResponseCode();
-                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
-                if(in!=null){
-                    ByteArrayOutputStream b=new ByteArrayOutputStream();
-                    byte[] buf=new byte[4096];
-                    int n;
-                    while((n=in.read(buf))>0)b.write(buf,0,n);
-                    try{out=new JSONObject(b.toString("UTF-8"));}catch(JSONException ignored){}
-                }
-                c.disconnect();
-            }catch(Exception e){
-                try{out.put("error","connection_failed");}catch(Exception ignored){}
-            }
-            final JSONObject result=out;
-            final int code=status;
-            runOnUiThread(()->{
-                if(code>=200&&code<300)done.accept(result);
-                else if(code==401){
-                    prefs.edit().clear().apply();
-                    token="";
-                    showAuth();
-                }else{
-                    KentDialog.showMessage(this,"Не удалось удалить сообщение",
-                            result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
-                }
-            });
-        });
+        requestMethod("DELETE",path,null,true,done,(error,status)->
+                KentDialog.showMessage(this,"Не удалось удалить",
+                        error.optString("error","Ошибка соединения")+" ("+status+")","Понятно",null));
+    }
+    /** Runs work on the I/O thread; returns false once the activity has shut it down. */
+    private boolean background(Runnable work){
+        try{
+            io.execute(work);
+            return true;
+        }catch(java.util.concurrent.RejectedExecutionException closed){
+            return false;
+        }
     }
     private void loadChatMedia(ImageView target,String url){
         if(target==null||url==null||url.trim().isEmpty())return;
@@ -2230,19 +2183,13 @@ public final class MainActivity extends Activity {
         ArrayList<ImageView> waiting=mediaTargets.computeIfAbsent(url,key->new ArrayList<>());
         waiting.add(target);
         if(!mediaLoading.add(url))return;
-        io.execute(()->{
-            HttpURLConnection connection=null;
-            Bitmap bitmap=null;
-            try{
-                connection=(HttpURLConnection)new URL(url).openConnection();
-                connection.setConnectTimeout(10000);
-                connection.setReadTimeout(15000);
-                connection.setRequestProperty("Authorization","Bearer "+token);
-                try(InputStream input=connection.getInputStream()){
-                    bitmap=BitmapFactory.decodeStream(input);
-                }
-            }catch(Exception ignored){}
-            finally{if(connection!=null)connection.disconnect();}
+        boolean queued=background(()->{
+            int startGeneration=Session.generation();
+            String access=Session.usableAccessToken(this);
+            Bitmap bitmap=fetchBitmap(url,access);
+            if(bitmap==null&&lastBitmapStatus==401&&
+                    Session.refresh(this,access,startGeneration)==Session.Refresh.REFRESHED)
+                bitmap=fetchBitmap(url,Session.accessToken(this));
             final Bitmap loaded=bitmap;
             runOnUiThread(()->{
                 mediaLoading.remove(url);
@@ -2254,6 +2201,30 @@ public final class MainActivity extends Activity {
                 }
             });
         });
+        if(!queued)mediaLoading.remove(url);
+    }
+
+    /** Status of the last {@link #fetchBitmap} call; only touched on the I/O thread. */
+    private int lastBitmapStatus;
+
+    private Bitmap fetchBitmap(String url,String access){
+        HttpURLConnection connection=null;
+        lastBitmapStatus=0;
+        try{
+            connection=(HttpURLConnection)new URL(url).openConnection();
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(15000);
+            if(!access.isEmpty())connection.setRequestProperty("Authorization","Bearer "+access);
+            lastBitmapStatus=connection.getResponseCode();
+            if(lastBitmapStatus<200||lastBitmapStatus>=300)return null;
+            try(InputStream input=connection.getInputStream()){
+                return BitmapFactory.decodeStream(input);
+            }
+        }catch(Exception ignored){
+            return null;
+        }finally{
+            if(connection!=null)connection.disconnect();
+        }
     }
 
     private void showChatImage(String url){
@@ -2278,7 +2249,7 @@ public final class MainActivity extends Activity {
         ArrayList<ImageView> targets=avatarTargets.computeIfAbsent(url,key->new ArrayList<>());
         targets.add(target);
         if(!avatarLoading.add(url))return;
-        io.execute(()->{
+        background(()->{
             HttpURLConnection connection=null;
             Bitmap bitmap=null;
             try{
@@ -2303,6 +2274,12 @@ public final class MainActivity extends Activity {
     private String enc(String s){try{return URLEncoder.encode(s,"UTF-8");}catch(Exception e){return s;}}
     private EditText field(String hint){EditText e=new EditText(this);e.setTextColor(TEXT);e.setHintTextColor(0xFF778397);e.setHint(hint);e.setTextSize(14);e.setPadding(dp(14),dp(10),dp(14),dp(10));e.setBackground(round(PANEL,15));e.setSingleLine(false);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(9);e.setLayoutParams(p);return e;}
     private Button button(String s){Button b=new Button(this);b.setText(s);b.setTextColor(Color.WHITE);b.setTextSize(14);b.setTypeface(null,Typeface.BOLD);b.setAllCaps(false);b.setMinHeight(dp(48));b.setPadding(dp(18),dp(8),dp(18),dp(8));b.setBackground(round(ACCENT,28));b.setElevation(dp(2));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.bottomMargin=dp(8);b.setLayoutParams(p);return b;}
+    private TextView sectionHeader(String text,boolean first){
+        TextView header=label(text,11,MUTED,true);
+        header.setLetterSpacing(.12f);
+        header.setPadding(dp(4),first?dp(2):dp(22),0,dp(9));
+        return header;
+    }
     private TextView label(String s,int size,int color,boolean bold){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);if(bold)t.setTypeface(null,Typeface.BOLD);return t;}
     private android.graphics.drawable.GradientDrawable round(int color,int radius){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}

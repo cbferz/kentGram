@@ -8,7 +8,6 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.widget.*;
-import android.content.SharedPreferences;
 import android.content.Intent;
 import android.net.Uri;
 import org.json.JSONObject;
@@ -19,25 +18,24 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class ProfileActivity extends Activity {
-    private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
+    private static final String API=Session.API;
     private static final int BG=0xFF090B10,PANEL=0xFF121720,TEXT=0xFFF4F6FA,MUTED=0xFF8994A6,BLUE=0xFF648DFF;
     private static final int PICK_AVATAR=7301;
     private static final int MAX_AVATAR_BYTES=5*1024*1024;
     private final ExecutorService io=Executors.newFixedThreadPool(2);
-    private String token="", username="";
+    private String username="";
     private boolean own, following;
     private long userId;
     private LinearLayout content;
+    private TextView handleView;
     private ImageView avatar;
     private EditText displayName,bio,avatarUrl;
     private Button followButton,saveButton,avatarUploadButton;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().setStatusBarColor(Color.BLACK);
-        getWindow().setNavigationBarColor(BG);
-        SharedPreferences prefs=getSharedPreferences("kentgram",MODE_PRIVATE);
-        token=prefs.getString("access_token","");
+        SystemBars.apply(this,BG);
+        if(!Session.isSignedIn(this)){returnToSignIn();return;}
         username=getIntent().getStringExtra("username");
         own=username==null || username.isEmpty();
         build();
@@ -85,13 +83,18 @@ public final class ProfileActivity extends Activity {
 
         TextView identity=label(own?"Ваш аккаунт":"Профиль kentGram",18,TEXT,true);
         identity.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(-1,-2);
-        ip.bottomMargin=dp(18);
-        content.addView(identity,ip);
+        content.addView(identity,new LinearLayout.LayoutParams(-1,-2));
+        handleView=label(own||username==null?"":"@"+username,14,MUTED,false);
+        handleView.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(-1,-2);
+        hp.topMargin=dp(3);
+        hp.bottomMargin=dp(18);
+        content.addView(handleView,hp);
 
         displayName=field("Имя");
         bio=field("О себе — до 160 символов");
         avatarUrl=field("HTTPS-ссылка на аватар");
+        avatarUrl.setSingleLine(true);
         if(own) {
             LinearLayout card=new LinearLayout(this);
             card.setOrientation(1);
@@ -138,9 +141,9 @@ public final class ProfileActivity extends Activity {
             card.addView(followButton,fp);
             followButton.setOnClickListener(v->toggleFollow());
         }
-        TextView social=label("ПОДПИСЧИКИ И ПОДПИСКИ",10,MUTED,true);
+        TextView social=label("ПОДПИСЧИКИ И ПОДПИСКИ",11,MUTED,true);
         social.setLetterSpacing(.12f);
-        social.setPadding(dp(2),dp(18),0,dp(8));
+        social.setPadding(dp(4),dp(22),0,dp(8));
         content.addView(social);
     }
 
@@ -151,9 +154,8 @@ public final class ProfileActivity extends Activity {
             displayName.setText(result.optString("display_name",""));
             bio.setText(result.optString("bio",""));
             avatarUrl.setText(result.optString("avatar_url",""));
+            if(!handle.isEmpty())handleView.setText("@"+handle);
             if(own) {
-                TextView handleView=label("@"+handle,15,MUTED,true);
-                content.addView(handleView,2);
                 username=handle;
             } else {
                 following=result.optBoolean("is_following",false);
@@ -170,7 +172,7 @@ public final class ProfileActivity extends Activity {
         if(requestCode!=PICK_AVATAR || resultCode!=RESULT_OK || data==null || data.getData()==null)return;
         Uri uri=data.getData();
         if(avatarUploadButton!=null)avatarUploadButton.setEnabled(false);
-        io.execute(()->{
+        background(()->{
             try(InputStream input=getContentResolver().openInputStream(uri);ByteArrayOutputStream output=new ByteArrayOutputStream()){
                 if(input==null)throw new IOException("file_unavailable");
                 byte[] buffer=new byte[8192];int total=0,n;
@@ -195,43 +197,32 @@ public final class ProfileActivity extends Activity {
     }
 
     private void uploadAvatar(byte[] bytes,String mime) {
-        io.execute(()->{
-            JSONObject result=new JSONObject();int status=0;
-            String boundary="kentgram-"+System.currentTimeMillis();
-            try{
-                HttpURLConnection c=(HttpURLConnection)new URL(API+"/me/avatar").openConnection();
-                c.setRequestMethod("POST");c.setDoOutput(true);
-                c.setConnectTimeout(15000);c.setReadTimeout(30000);
-                c.setRequestProperty("Accept","application/json");
-                c.setRequestProperty("Authorization","Bearer "+token);
-                c.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
-                String filename="image/jpeg".equals(mime)?"avatar.jpg":"avatar.png";
-                try(OutputStream out=c.getOutputStream()){
-                    out.write(("--"+boundary+"\r\n").getBytes(StandardCharsets.UTF_8));
-                    out.write(("Content-Disposition: form-data; name=\"avatar\"; filename=\""+filename+"\"\r\n").getBytes(StandardCharsets.UTF_8));
-                    out.write(("Content-Type: "+mime+"\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-                    out.write(bytes);
-                    out.write(("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.UTF_8));
-                }
-                status=c.getResponseCode();
-                InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
-                if(in!=null)try(InputStream stream=in;ByteArrayOutputStream output=new ByteArrayOutputStream()){
-                    byte[] buffer=new byte[4096];int n;while((n=stream.read(buffer))!=-1)output.write(buffer,0,n);
-                    result=new JSONObject(output.toString("UTF-8"));
-                }
-                c.disconnect();
-            }catch(Exception e){try{result.put("error","upload_failed");}catch(Exception ignored){}}
-            final JSONObject response=result;final int code=status;
+        String boundary="kentgram-"+System.currentTimeMillis();
+        String filename="image/jpeg".equals(mime)?"avatar.jpg":"avatar.png";
+        Session.BodyWriter multipart=c->{
+            c.setRequestProperty("Content-Type","multipart/form-data; boundary="+boundary);
+            try(OutputStream out=c.getOutputStream()){
+                out.write(("--"+boundary+"\r\n").getBytes(StandardCharsets.UTF_8));
+                out.write(("Content-Disposition: form-data; name=\"avatar\"; filename=\""+filename+"\"\r\n").getBytes(StandardCharsets.UTF_8));
+                out.write(("Content-Type: "+mime+"\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+                out.write(bytes);
+                out.write(("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.UTF_8));
+            }
+        };
+        background(()->{
+            Session.Result response=Session.call(this,"POST","/me/avatar",multipart,true,15000,30000);
             runOnUiThread(()->{
+                if(isDestroyed())return;
                 if(avatarUploadButton!=null)avatarUploadButton.setEnabled(true);
-                if(code>=200&&code<300){
-                    String url=response.optString("avatar_url","");
+                if(response.sessionLost){returnToSignIn();return;}
+                if(response.ok()){
+                    String url=response.body.optString("avatar_url","");
                     avatarUrl.setText(url);
                     loadAvatar(url);
                     toast("Фото профиля загружено");
                 }else{
                     KentDialog.showMessage(this,"Не удалось загрузить фото",
-                            response.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
+                            response.body.optString("error","Ошибка соединения")+" ("+response.status+")","Понятно",null);
                 }
             });
         });
@@ -255,7 +246,7 @@ public final class ProfileActivity extends Activity {
 
     private void loadAvatar(String url) {
         if(url==null||url.isEmpty())return;
-        io.execute(()->{
+        background(()->{
             try {
                 HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();c.setConnectTimeout(8000);c.setReadTimeout(8000);
                 c.setInstanceFollowRedirects(false);
@@ -267,20 +258,30 @@ public final class ProfileActivity extends Activity {
 
     private interface Done { void accept(JSONObject value); }
     private void call(String method,String path,JSONObject body,Done done) {
-        io.execute(()->{
-            JSONObject out=new JSONObject();int status=0;
-            try {
-                HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();
-                c.setRequestMethod(method);c.setConnectTimeout(12000);c.setReadTimeout(12000);
-                c.setRequestProperty("Accept","application/json");c.setRequestProperty("Authorization","Bearer "+token);
-                if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}
-                status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();
-                if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);out=new JSONObject(b.toString("UTF-8"));}
-                c.disconnect();
-            } catch(Exception e){try{out.put("error","network_error");}catch(Exception ignored){}}
-            final JSONObject result=out;final int code=status;
-            runOnUiThread(()->{if(code>=200&&code<300)done.accept(result);else{if(saveButton!=null)saveButton.setEnabled(true);if(followButton!=null)followButton.setEnabled(true);KentDialog.showMessage(this,"Ошибка профиля",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);}});
+        background(()->{
+            Session.Result result=Session.call(this,method,path,body,true);
+            runOnUiThread(()->{
+                if(isDestroyed())return;
+                if(result.ok()){done.accept(result.body);return;}
+                if(result.sessionLost){returnToSignIn();return;}
+                if(saveButton!=null)saveButton.setEnabled(true);
+                if(followButton!=null)followButton.setEnabled(true);
+                KentDialog.showMessage(this,"Ошибка профиля",result.body.optString("error","Ошибка соединения")+" ("+result.status+")","Понятно",null);
+            });
         });
+    }
+
+    /** The session ended: clear it and send the user back to the sign-in screen. */
+    private void returnToSignIn() {
+        Session.clear(this);
+        Intent intent=new Intent(this,MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+        finish();
+    }
+
+    private void background(Runnable work) {
+        try{io.execute(work);}catch(java.util.concurrent.RejectedExecutionException ignored){}
     }
 
     private void section(String s){section(content,s);}
