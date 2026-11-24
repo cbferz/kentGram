@@ -53,13 +53,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Configure existing Android SDK
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/.android/sdk}}"
+          test -d "$SDK_ROOT/cmdline-tools"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -n "$SDKMANAGER" && test -x "$SDKMANAGER"
+          CMDLINE_BIN="$(dirname "$SDKMANAGER")"
+          {
+            echo "ANDROID_HOME=$SDK_ROOT"
+            echo "ANDROID_SDK_ROOT=$SDK_ROOT"
+          } >> "$GITHUB_ENV"
+          {
+            echo "$CMDLINE_BIN"
+            echo "$SDK_ROOT/platform-tools"
+            echo "$SDK_ROOT/emulator"
+          } >> "$GITHUB_PATH"
+          echo "Android SDK: $SDK_ROOT"
+          "$SDKMANAGER" --version
 
       - name: Install only missing Android SDK components
         shell: bash
         run: |
           set -Eeuo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
           packages=(
             'platform-tools'
             'platforms;android-35'
@@ -67,7 +86,7 @@ jobs:
             'cmake;3.22.1'
             'ndk;27.0.12077973'
           )
-          installed="$(sdkmanager --list_installed 2>/dev/null || true)"
+          installed="$("$SDKMANAGER" --list_installed 2>/dev/null || true)"
           missing=()
           for package in "${packages[@]}"; do
             if ! grep -Fq "$package" <<< "$installed"; then
@@ -75,8 +94,8 @@ jobs:
             fi
           done
           if (( ${#missing[@]} > 0 )); then
-            yes | sdkmanager --licenses >/dev/null
-            sdkmanager "${missing[@]}"
+            "$SDKMANAGER" --licenses </dev/null
+            "$SDKMANAGER" --install "${missing[@]}"
           else
             echo "All required Android SDK components are already installed."
           fi
