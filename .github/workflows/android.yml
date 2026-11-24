@@ -20,8 +20,8 @@ permissions:
 jobs:
   android:
     name: Android APK
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 60
     env:
       KENTGRAM_KEYSTORE_BASE64: ${{ secrets.KENTGRAM_KEYSTORE_BASE64 }}
       KENTGRAM_KEYSTORE_PASSWORD: ${{ secrets.KENTGRAM_KEYSTORE_PASSWORD }}
@@ -51,11 +51,10 @@ jobs:
             'cmake;3.22.1' \
             'ndk;27.0.12077973'
 
-      - name: Set up Gradle with dependency cache
+      - name: Set up Gradle with dependency and build cache
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
 
       - name: Prepare persistent signing key
         id: signing
@@ -107,8 +106,8 @@ jobs:
 
   server:
     name: Go server tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: server
