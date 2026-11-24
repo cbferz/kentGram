@@ -4,10 +4,16 @@ on:
   push:
     branches:
       - '**'
+    paths:
+      - 'server/**'
+      - '.github/workflows/backend.yml'
   pull_request:
     branches:
       - '**'
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'server/**'
+      - '.github/workflows/backend.yml'
   workflow_dispatch:
 
 concurrency:
