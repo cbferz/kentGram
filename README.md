@@ -67,9 +67,23 @@ CGO_ENABLED=0 go build ./cmd/api
 
 ## Android build
 
-Open the repository in Android Studio with Android SDK 35 and a compatible
-Android Gradle Plugin. CI builds the debug APK and verifies its signature.
-Keep the existing application ID and signing key for install-over updates.
+Open the repository in Android Studio with Android SDK 35 (platform 35 and
+build-tools 35.0.0), or build from the command line with the Gradle wrapper:
+
+```bash
+./gradlew assembleDebug
+```
+
+CI builds the debug APK on the self-hosted runner and verifies its signature.
+That runner keeps `~/.gradle` and the Android SDK between jobs, so
+dependencies, the Gradle distribution and the build cache are reused instead
+of being downloaded each time. Keep the existing application ID and signing
+key for install-over updates.
+
+Sessions: access tokens live 15 minutes and refresh tokens rotate on every
+use. All Android requests go through `Session.java`, which refreshes once per
+process, retries the failed request, and signs the user out only when the
+server rejects the refresh token.
 
 ## API and protocol notes
 

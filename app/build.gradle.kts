@@ -14,6 +14,9 @@ val hasCiSigning = !ciKeystorePath.isNullOrBlank()
 android {
     namespace = "com.kentgram"
     compileSdk = 35
+    // Match the build-tools the CI installs; otherwise AGP downloads its own
+    // default (34.0.0) on every fresh runner.
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.kentgram"
@@ -23,12 +26,6 @@ android {
         // Local builds keep the safe initial value.
         versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1).coerceAtLeast(1)
         versionName = "0.1.$versionCode"
-
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++17", "-fexceptions", "-frtti")
-            }
-        }
     }
 
     signingConfigs {
@@ -62,13 +59,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
     }
 }
 
