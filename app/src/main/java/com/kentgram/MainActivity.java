@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
@@ -18,19 +20,26 @@ import java.util.concurrent.Executors;
 import java.util.ArrayDeque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Set;
 
 public final class MainActivity extends Activity {
     private static final String API="https://api.kentgram.tendercheck.pro/api/v1";
     private static final int BG=0xFF0D1118,PANEL=0xFF151C27,TEXT=0xFFF4F7FB,MUTED=0xFF9AA9BC;
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private SharedPreferences prefs;
-    private String token="";
+    private volatile String token=""; // read from the realtime thread too
     private LinearLayout root,content,top,navBar;
     private EditText composer;
     private LinearLayout replyPreview;
     private long replyToMessageId=0;
     private String replyToBody="", replyToSender="";
     private long currentChat=0;
+    // Views of the screen currently shown; null when that screen is not on top. Used by realtime sync.
+    private LinearLayout openMessages,openChatsList;
+    private ScrollView openHistory;
+    private RealtimeClient realtime;
+    private final Handler ui=new Handler(Looper.getMainLooper());
+    private Runnable pendingSync;
     private final HashMap<Long,ArrayDeque<String>> sendQueues=new HashMap<>();
     private final HashMap<Long,ArrayDeque<Long>> replyQueues=new HashMap<>();
     private final HashSet<Long> sendingChats=new HashSet<>();
@@ -38,6 +47,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(Color.BLACK);getWindow().setNavigationBarColor(BG);prefs=getSharedPreferences("kentgram",MODE_PRIVATE);token=prefs.getString("access_token","");if(token.isEmpty())showAuth();else showChats();}
 
     private void base(String title){
+        openMessages=null;openHistory=null;openChatsList=null;
         root=new LinearLayout(this);root.setOrientation(1);root.setBackgroundColor(BG);
         top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);top.setPadding(dp(18),dp(12),dp(18),dp(12));top.setBackground(round(PANEL,22));
         TextView h=label(title,21,TEXT,true);top.addView(h,new LinearLayout.LayoutParams(0,-2,1));LinearLayout.LayoutParams headerParams=new LinearLayout.LayoutParams(-1,-2);headerParams.setMargins(dp(10),dp(8),dp(10),dp(4));root.addView(top,headerParams);
@@ -151,6 +161,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showAuth(){
+        stopRealtime();
         base("kentGram");
         if(navBar!=null)root.removeView(navBar);
         content.setPadding(dp(20),dp(24),dp(20),dp(28));
@@ -239,6 +250,7 @@ public final class MainActivity extends Activity {
     private void showChats(){
         currentChat=0;
         base("kentGram");
+        ensureRealtime();
 
         TextView searchTitle=label("Поиск людей",16,TEXT,true);
         content.addView(searchTitle);
@@ -257,6 +269,7 @@ public final class MainActivity extends Activity {
         LinearLayout chatsList=new LinearLayout(this);
         chatsList.setOrientation(1);
         content.addView(chatsList);
+        openChatsList=chatsList;
         loadChats(chatsList);
 
         search.setOnClickListener(v->searchUsers(query,search,results));
@@ -281,8 +294,9 @@ public final class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(-1,-2));
     }
 
-    private void loadChats(LinearLayout chatsList){
-        requestGet("/chats",r->{
+    private void loadChats(LinearLayout chatsList){loadChats(chatsList,false);}
+    private void loadChats(LinearLayout chatsList,boolean quiet){
+        request("/chats",null,true,r->{
             chatsList.removeAllViews();
             JSONArray a=r.optJSONArray("chats");
             if(a==null||a.length()==0){
@@ -309,7 +323,7 @@ public final class MainActivity extends Activity {
                 chatsList.addView(card,lp);
                 card.setOnClickListener(v->openChat(chatId,peerName));
             }
-        });
+        },null,quiet);
     }
 
     private void searchUsers(EditText query,Button search,LinearLayout results){
@@ -383,11 +397,16 @@ public final class MainActivity extends Activity {
         LinearLayout composerBox=new LinearLayout(this);composerBox.setOrientation(1);composerBox.setPadding(dp(8),dp(5),dp(8),dp(5));composerBox.setBackgroundColor(PANEL);
         replyPreview=new LinearLayout(this);replyPreview.setOrientation(1);replyPreview.setPadding(dp(10),dp(7),dp(10),dp(7));replyPreview.setBackground(round(0xFF202A38,12));replyPreview.setVisibility(View.GONE);replyPreview.addView(label("Ответ на сообщение",12,0xFF76A7FF,true));TextView previewText=label("",13,TEXT,false);replyPreview.addView(previewText);replyPreview.setOnClickListener(v->clearReply());composerBox.addView(replyPreview,new LinearLayout.LayoutParams(-1,-2));
         LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);composer=field("Сообщение");composer.setLayoutParams(new LinearLayout.LayoutParams(0,-2,1));bar.addView(composer);Button send=button("➤");send.setTextSize(16);LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(58),dp(48));bar.addView(send,sp);composerBox.addView(bar);root.addView(composerBox);
-        send.setOnClickListener(v->sendMessage(id,messages,history));composer.setOnEditorActionListener((v,a,e)->{sendMessage(id,messages,history);return true;});refreshMessages(id,messages,history);
+        send.setOnClickListener(v->sendMessage(id,messages,history));composer.setOnEditorActionListener((v,a,e)->{sendMessage(id,messages,history);return true;});openMessages=messages;openHistory=history;refreshMessages(id,messages,history);
     }
-    private void refreshMessages(long id,LinearLayout messages,ScrollView history){
-        requestGet("/chats/"+id+"/messages",r->{
-            if(currentChat!=id)return;
+    private void refreshMessages(long id,LinearLayout messages,ScrollView history){refreshMessages(id,messages,history,false);}
+    /** quiet=true is used by realtime sync: a failed background refresh must not pop up a dialog. */
+    private void refreshMessages(long id,LinearLayout messages,ScrollView history,boolean quiet){
+        request("/chats/"+id+"/messages",null,true,r->{
+            if(currentChat!=id||openMessages!=messages)return;
+            // Keep the reading position unless the user is already at the bottom.
+            final boolean stick=messages.getChildCount()==0||messages.getBottom()-(history.getScrollY()+history.getHeight())<dp(80);
+            final int oldY=history.getScrollY();
             messages.removeAllViews();
             JSONArray a=r.optJSONArray("messages");
             if(a!=null)for(int i=0;i<a.length();i++){
@@ -400,23 +419,112 @@ public final class MainActivity extends Activity {
                 row.setGravity(mine?Gravity.RIGHT:Gravity.LEFT);
                 long replyId=m.optLong("reply_to_message_id",0);String quoted=m.optString("reply_to_body","");String quotedSender=m.optString("reply_to_sender_username","");
                 if(replyId>0){TextView quote=label((quotedSender.isEmpty()?"Ответ на сообщение":"Ответ на @"+quotedSender)+"\\n"+(quoted.isEmpty()?"Сообщение недоступно":quoted),12,MUTED,false);quote.setPadding(dp(9),dp(6),dp(9),dp(6));quote.setBackground(round(0xFF111925,10));LinearLayout.LayoutParams qp=new LinearLayout.LayoutParams(-2,-2);qp.setMargins(dp(2),dp(4),dp(2),0);row.addView(quote,qp);quote.setOnClickListener(v->scrollToMessage(messages,history,replyId));}
+                String forwardedFrom=m.optString("forwarded_from_username","");
+                if(!forwardedFrom.isEmpty()){TextView fwd=label("Переслано от @"+forwardedFrom,12,MUTED,false);fwd.setPadding(dp(6),0,dp(6),0);row.addView(fwd);}
                 TextView bubble=label(body,15,TEXT,false);
                 bubble.setPadding(dp(13),dp(9),dp(13),dp(9));
                 bubble.setBackground(round(mine?0xFF17466A:0xFF202A38,16));
                 LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,-2);
                 p.setMargins(dp(2),dp(4),dp(2),dp(4));
                 row.addView(bubble,p);
+                JSONArray reactions=m.optJSONArray("reactions");
+                final Set<String> mineEmojis=new HashSet<>();
+                if(reactions!=null)for(int k=0;k<reactions.length();k++){JSONObject o=reactions.optJSONObject(k);if(o!=null&&o.optBoolean("mine"))mineEmojis.add(o.optString("emoji"));}
+                String flags=(m.optBoolean("pinned")?"\uD83D\uDCCC закреплено":"")+(m.has("edited_at")&&!m.isNull("edited_at")?(m.optBoolean("pinned")?" · ":"")+"изменено":"");
+                if(!flags.isEmpty()){TextView meta=label(flags,11,MUTED,false);meta.setPadding(dp(6),0,dp(6),0);row.addView(meta);}
+                View chips=reactions==null?null:reactionChips(reactions,id,messageId);
+                if(chips!=null)row.addView(chips);
                 bubble.setOnLongClickListener(v->{
-                    MessageActionMenu.show(this,bubble,body,mine,
+                    MessageActionMenu.show(this,bubble,body,mine,mineEmojis,
                             ()->confirmDeleteMessage(id,messageId,messages,history),
-                            ()->setReply(messageId,body,m.optString("sender_username","")));
+                            ()->setReply(messageId,body,m.optString("sender_username","")),
+                            (emoji,had)->toggleReaction(id,messageId,emoji,had));
                     return true;
                 });
                 messages.addView(row);
             }
-            history.post(()->history.fullScroll(View.FOCUS_DOWN));
-        });
+            history.post(()->{if(stick)history.fullScroll(View.FOCUS_DOWN);else history.scrollTo(0,oldY);});
+        },null,quiet);
     }
+
+    /** One chip per reaction (emoji + count); tapping toggles the current user's own reaction. */
+    private View reactionChips(JSONArray reactions,long chatId,long messageId){
+        LinearLayout column=new LinearLayout(this);column.setOrientation(1);
+        LinearLayout line=null;int inLine=0;
+        for(int k=0;k<reactions.length();k++){
+            JSONObject o=reactions.optJSONObject(k);
+            if(o==null)continue;
+            final String emoji=o.optString("emoji");
+            final boolean had=o.optBoolean("mine");
+            int count=o.optInt("count");
+            if(emoji.isEmpty()||count<=0)continue;
+            if(line==null||inLine==4){line=new LinearLayout(this);line.setOrientation(0);column.addView(line);inLine=0;}
+            TextView chip=label(emoji+" "+count,13,TEXT,had);
+            chip.setGravity(Gravity.CENTER_VERTICAL);
+            chip.setMinHeight(dp(32));
+            chip.setPadding(dp(9),dp(4),dp(9),dp(4));
+            chip.setBackground(round(had?0xFF2D4F7A:0xFF1A2330,12));
+            LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-2,-2);cp.setMargins(dp(2),0,dp(2),dp(2));
+            line.addView(chip,cp);
+            chip.setOnClickListener(v->toggleReaction(chatId,messageId,emoji,had));
+            inLine++;
+        }
+        return column.getChildCount()==0?null:column;
+    }
+
+    /** POST adds the reaction, DELETE ?emoji= removes it. The list is re-synced from the server afterwards. */
+    private void toggleReaction(long chatId,long messageId,String emoji,boolean remove){
+        if(messageId<=0||emoji==null||emoji.isEmpty())return;
+        final String base="/chats/"+chatId+"/messages/"+messageId+"/reactions";
+        final Done synced=r->{if(currentChat==chatId&&openMessages!=null&&openHistory!=null)refreshMessages(chatId,openMessages,openHistory,true);};
+        if(remove){requestDelete(base+"?emoji="+enc(emoji),"Не удалось убрать реакцию",synced);return;}
+        JSONObject body=new JSONObject();
+        try{body.put("emoji",emoji);}catch(JSONException ignored){}
+        request(base,body,true,synced,(err,code)->{
+            String e=err.optString("error","");
+            toast(code==409||"reaction_limit_reached".equals(e)?"На сообщении уже слишком много разных реакций":
+                    code==404?"Сообщение недоступно":"Не удалось поставить реакцию");
+        },true);
+    }
+
+    // ---- realtime (WebSocket /api/v1/ws) -------------------------------------------------
+    private void ensureRealtime(){
+        if(token.isEmpty())return;
+        if(realtime==null)realtime=new RealtimeClient(API.replaceFirst("^http","ws")+"/ws",()->token,json->ui.post(()->onRealtime(json)));
+        realtime.start(); // idempotent
+    }
+    private void stopRealtime(){
+        if(realtime!=null)realtime.stop();
+        if(pendingSync!=null){ui.removeCallbacks(pendingSync);pendingSync=null;}
+    }
+    private void onRealtime(String json){
+        if(token.isEmpty())return;
+        String type;long chat;
+        try{JSONObject e=new JSONObject(json);type=e.optString("type");chat=e.optLong("chat_id",0);}catch(JSONException bad){return;}
+        switch(type){
+            case "ready": scheduleSync();break; // (re)connected: events may have been missed meanwhile
+            case "message.new":case "message.edited":case "message.deleted":case "reaction.updated":
+            case "message.pinned":case "message.unpinned":
+                if(openMessages!=null&&chat==currentChat)scheduleSync();
+                else if(openChatsList!=null)scheduleSync();
+                break;
+            default: break; // typing / presence / chat.read are not rendered on Android yet
+        }
+    }
+    /** Coalesces bursts of events into one re-fetch of whatever list is on screen. */
+    private void scheduleSync(){
+        if(pendingSync!=null)ui.removeCallbacks(pendingSync);
+        pendingSync=()->{
+            pendingSync=null;
+            if(token.isEmpty())return;
+            if(openMessages!=null&&openHistory!=null&&currentChat!=0)refreshMessages(currentChat,openMessages,openHistory,true);
+            else if(openChatsList!=null)loadChats(openChatsList,true);
+        };
+        ui.postDelayed(pendingSync,250);
+    }
+    // On resume the socket reconnects and its "ready" event triggers the re-sync of whatever is on screen.
+    @Override protected void onResume(){super.onResume();ensureRealtime();}
+    @Override protected void onPause(){super.onPause();stopRealtime();}
 
     private void setReply(long messageId,String body,String sender){
         replyToMessageId=messageId;replyToBody=body;replyToSender=sender;
@@ -480,15 +588,17 @@ public final class MainActivity extends Activity {
     private void request(String path,JSONObject body,boolean auth,Done done){
         request(path,body,auth,done,null);
     }
-    private void request(String path,JSONObject body,boolean auth,Done done,Failed failed){
+    private void request(String path,JSONObject body,boolean auth,Done done,Failed failed){request(path,body,auth,done,failed,false);}
+    private void request(String path,JSONObject body,boolean auth,Done done,Failed failed,boolean quiet){
         io.execute(()->{JSONObject out=new JSONObject();int status=0;try{HttpURLConnection c=(HttpURLConnection)new URL(API+path).openConnection();c.setRequestMethod(body==null?"GET":"POST");c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("Accept","application/json");if(auth&&!token.isEmpty())c.setRequestProperty("Authorization","Bearer "+token);if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json");try(OutputStream s=c.getOutputStream()){s.write(body.toString().getBytes(StandardCharsets.UTF_8));}}status=c.getResponseCode();InputStream in=status>=200&&status<300?c.getInputStream():c.getErrorStream();if(in!=null){ByteArrayOutputStream b=new ByteArrayOutputStream();byte[] buf=new byte[4096];int n;while((n=in.read(buf))>0)b.write(buf,0,n);String responseText=b.toString("UTF-8");try{out=new JSONObject(responseText);}catch(JSONException parseError){out=new JSONObject();out.put("error",status==404?"endpoint_not_found":status>=500?"server_error":"http_error");}}c.disconnect();}catch(Exception e){try{out.put("error","connection_failed");}catch(Exception ignored){}}final JSONObject result=out;final int code=status;runOnUiThread(()->{
             if(code>=200&&code<300){done.accept(result);return;}
             if(code==401&&auth){prefs.edit().clear().apply();token="";showAuth();toast("Войдите снова");}
-            else KentDialog.showMessage(this,code==404?"Маршрут не найден":"Не удалось выполнить запрос",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
+            else if(!quiet)KentDialog.showMessage(this,code==404?"Маршрут не найден":"Не удалось выполнить запрос",result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
             if(failed!=null)failed.accept(result,code);
         });});
     }
-    private void requestDelete(String path,Done done){
+    private void requestDelete(String path,Done done){requestDelete(path,"Не удалось удалить сообщение",done);}
+    private void requestDelete(String path,String failTitle,Done done){
         io.execute(()->{
             JSONObject out=new JSONObject();
             int status=0;
@@ -521,7 +631,7 @@ public final class MainActivity extends Activity {
                     token="";
                     showAuth();
                 }else{
-                    KentDialog.showMessage(this,"Не удалось удалить сообщение",
+                    KentDialog.showMessage(this,failTitle,
                             result.optString("error","Ошибка соединения")+" ("+code+")","Понятно",null);
                 }
             });
@@ -534,5 +644,5 @@ public final class MainActivity extends Activity {
     private android.graphics.drawable.GradientDrawable round(int color,int radius){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
     private int dp(float n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
     private void toast(String s){KentDialog.showToast(this,s);}
-    @Override protected void onDestroy(){super.onDestroy();io.shutdown();}
+    @Override protected void onDestroy(){super.onDestroy();stopRealtime();io.shutdown();}
 }
