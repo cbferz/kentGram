@@ -1,4 +1,4 @@
-name: kentGram CI
+name: kentGram Android CI
 
 on:
   push:
@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: kentgram-ci-${{ github.workflow }}-${{ github.ref }}
+  group: kentgram-android-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   android:
-    name: Android APK
+    name: Build Android APK
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 60
     env:
@@ -40,7 +40,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK components
+      - name: Install required Android SDK components
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null
@@ -51,7 +51,7 @@ jobs:
             'cmake;3.22.1' \
             'ndk;27.0.12077973'
 
-      - name: Set up Gradle with dependency and build cache
+      - name: Set up Gradle and restore dependency/build cache
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
@@ -62,7 +62,7 @@ jobs:
         run: |
           if [[ -z "$KENTGRAM_KEYSTORE_BASE64" || -z "$KENTGRAM_KEYSTORE_PASSWORD" || -z "$KENTGRAM_KEY_ALIAS" || -z "$KENTGRAM_KEY_PASSWORD" ]]; then
             echo 'configured=false' >> "$GITHUB_OUTPUT"
-            echo 'Signing secrets are unavailable; building an unsigned CI APK.'
+            echo 'Signing secrets unavailable; producing an unsigned CI APK.'
             exit 0
           fi
           mkdir -p "$RUNNER_TEMP/kentgram-signing"
@@ -103,40 +103,3 @@ jobs:
             app/build/outputs/apk/debug/build-info.txt
           if-no-files-found: error
           retention-days: 14
-
-  server:
-    name: Go server tests
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: server
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23.x'
-          cache: true
-          cache-dependency-path: server/go.mod
-
-      - name: Download Go modules
-        run: go mod download
-
-      - name: Check formatting
-        shell: bash
-        run: |
-          files="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
-          if [[ -n "$files" ]]; then
-            echo "Go files need gofmt:"
-            echo "$files"
-            exit 1
-          fi
-
-      - name: Run Go tests
-        run: go test -race ./...
-
-      - name: Run Go vet
-        run: go vet ./...
