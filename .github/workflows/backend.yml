@@ -26,7 +26,7 @@ permissions:
 jobs:
   test:
     name: Go tests and build
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
       postgres:
