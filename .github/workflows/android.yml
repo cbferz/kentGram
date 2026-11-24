@@ -4,10 +4,26 @@ on:
   push:
     branches:
       - '**'
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - '**/*.gradle'
+      - '**/*.gradle.kts'
+      - 'gradle.properties'
+      - 'settings.gradle.kts'
+      - '.github/workflows/android.yml'
   pull_request:
     branches:
       - '**'
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - '**/*.gradle'
+      - '**/*.gradle.kts'
+      - 'gradle.properties'
+      - 'settings.gradle.kts'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
 
 concurrency:
@@ -40,21 +56,45 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install required Android SDK components
+      - name: Install only missing Android SDK components
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager \
-            'platform-tools' \
-            'platforms;android-35' \
-            'build-tools;35.0.0' \
-            'cmake;3.22.1' \
+          set -Eeuo pipefail
+          packages=(
+            'platform-tools'
+            'platforms;android-35'
+            'build-tools;35.0.0'
+            'cmake;3.22.1'
             'ndk;27.0.12077973'
+          )
+          installed="$(sdkmanager --list_installed 2>/dev/null || true)"
+          missing=()
+          for package in "${packages[@]}"; do
+            if ! grep -Fq "$package" <<< "$installed"; then
+              missing+=("$package")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            yes | sdkmanager --licenses >/dev/null
+            sdkmanager "${missing[@]}"
+          else
+            echo "All required Android SDK components are already installed."
+          fi
+
+      - name: Restore Gradle configuration cache
+        uses: actions/cache@v4
+        with:
+          path: .gradle/configuration-cache
+          key: kentgram-config-${{ runner.os }}-${{ hashFiles('**/*.gradle', '**/*.gradle.kts', 'gradle.properties') }}-${{ github.sha }}
+          restore-keys: |
+            kentgram-config-${{ runner.os }}-${{ hashFiles('**/*.gradle', '**/*.gradle.kts', 'gradle.properties') }}-
 
       - name: Set up Gradle and restore dependency/build cache
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+          gradle-home-cache-includes: |
+            caches/build-cache-1
 
       - name: Prepare persistent signing key
         id: signing
@@ -72,7 +112,7 @@ jobs:
           echo 'configured=true' >> "$GITHUB_OUTPUT"
 
       - name: Build debug APK
-        run: gradle --no-daemon --build-cache assembleDebug
+        run: gradle --build-cache --configuration-cache --configuration-cache-problems=warn assembleDebug
 
       - name: Verify APK signature
         if: steps.signing.outputs.configured == 'true'
