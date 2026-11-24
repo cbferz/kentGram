@@ -1,0 +1,32 @@
+# EXAMPLE ONLY - not applied anywhere. Serves the web client and proxies the
+# API from ONE origin, so the browser needs no CORS and the WebSocket's default
+# same-host Origin check passes. Copy, replace the host and root, then validate
+# with `caddy validate` before reloading. Keep the existing API-only block
+# (deploy/Caddyfile) as the rollback.
+#
+# Cross-origin alternative: keep the web client on another host and list its
+# origin in WS_ALLOWED_ORIGINS - but the REST API has no CORS support yet, so
+# same-origin hosting is the supported setup.
+app.example.com {
+	encode zstd gzip
+
+	@api path /api/* /health
+	handle @api {
+		reverse_proxy 127.0.0.1:8080   # WebSocket upgrades are proxied automatically
+	}
+
+	handle {
+		root * /srv/kentgram-web       # contents of the repo's web/ directory (without web/test)
+		@shell path / /index.html /sw.js /manifest.webmanifest
+		header @shell Cache-Control "no-cache"
+		header /app.js Cache-Control "no-cache"
+		header /styles.css Cache-Control "no-cache"
+		header {
+			X-Content-Type-Options nosniff
+			Referrer-Policy no-referrer
+			X-Frame-Options DENY
+			-Server
+		}
+		file_server
+	}
+}
