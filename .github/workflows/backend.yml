@@ -1,15 +1,27 @@
-name: Backend checks
+name: kentGram Backend CI
 
 on:
   push:
-    branches: [main, feat/opengram-inspired-expansion]
+    branches:
+      - '**'
   pull_request:
-    branches: [main]
+    branches:
+      - '**'
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
+
+concurrency:
+  group: kentgram-backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Go tests and build
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16-alpine
@@ -23,28 +35,43 @@ jobs:
           --health-cmd "pg_isready -U kentgram -d kentgram_test"
           --health-interval 5s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 15
     env:
-      # Integration tests run against this real database and skip when unset.
       TEST_DATABASE_URL: postgres://kentgram:kentgram_ci_only@localhost:5432/kentgram_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go and restore module/build cache
+        uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
-          cache-dependency-path: server/go.sum
-      - name: Resolve Go dependencies
+          go-version: '1.23.x'
+          cache: true
+          cache-dependency-path: server/go.mod
+
+      - name: Download Go modules
         working-directory: server
-        run: go mod tidy
-      - name: Format Go source
+        run: go mod download
+
+      - name: Check Go formatting
         working-directory: server
-        run: gofmt -w ./cmd ./internal
-      - name: Vet
+        shell: bash
+        run: |
+          files="$(gofmt -l $(find ./cmd ./internal -name '*.go' -type f))"
+          if [[ -n "$files" ]]; then
+            echo "These Go files need gofmt:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Run go vet
         working-directory: server
         run: go vet ./...
-      - name: Test
+
+      - name: Run tests with race detector
         working-directory: server
         run: go test -race -count=1 ./...
-      - name: Build
+
+      - name: Build API server
         working-directory: server
-        run: CGO_ENABLED=0 go build ./cmd/api
+        run: CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/kentgram-api" ./cmd/api
