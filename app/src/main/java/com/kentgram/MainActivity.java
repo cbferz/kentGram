@@ -12,6 +12,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
+import android.widget.FrameLayout;
 import android.widget.*;
 import android.content.SharedPreferences;
 import android.content.Intent;
@@ -30,6 +33,8 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
+import eightbitlab.com.blurview.BlurTarget;
+import eightbitlab.com.blurview.BlurView;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -56,7 +61,8 @@ public final class MainActivity extends Activity {
     private String activeChatSubtitle="";
     private long lastTypingSentAt=0;
     private SharedPreferences prefs;
-    private LinearLayout root,content,top,navBar;
+    private LinearLayout root,content,top;
+    private ViewGroup navBar;
     private EditText composer;
     private LinearLayout replyPreview;
     private long replyToMessageId=0;
@@ -131,9 +137,11 @@ public final class MainActivity extends Activity {
         content.setOrientation(1);
         content.setPadding(dp(18),dp(12),dp(18),dp(22));
         scroll.addView(content);
-        root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        BlurTarget blurTarget=new BlurTarget(this);
+        blurTarget.addView(scroll,new FrameLayout.LayoutParams(-1,-1));
+        root.addView(blurTarget,new LinearLayout.LayoutParams(-1,0,1));
 
-        buildNavigation(title);
+        buildNavigation(title,blurTarget);
         setContentView(root);
         content.setAlpha(0f);
         content.setTranslationY(dp(9));
@@ -142,13 +150,30 @@ public final class MainActivity extends Activity {
         if(navBar!=null){navBar.setAlpha(0f);navBar.animate().alpha(1f).setDuration(190).start();}
     }
 
-    private void buildNavigation(String title){
-        navBar=new LinearLayout(this);
-        navBar.setGravity(Gravity.CENTER);
-        navBar.setOrientation(LinearLayout.HORIZONTAL);
-        navBar.setPadding(dp(7),dp(7),dp(7),dp(7));
-        navBar.setBackground(round(0xFF151B25,30));
-        navBar.setElevation(dp(8));
+    private void buildNavigation(String title,BlurTarget blurTarget){
+        FrameLayout glassBar=new FrameLayout(this);
+        glassBar.setClipChildren(false);
+        glassBar.setClipToPadding(false);
+
+        android.graphics.drawable.GradientDrawable glassShape=round(0xB8182636,30);
+        glassShape.setStroke(dp(1),0x44FFFFFF);
+        BlurView glass=new BlurView(this);
+        glass.setBackground(glassShape);
+        glass.setOutlineProvider(ViewOutlineProvider.BACKGROUND);
+        glass.setClipToOutline(true);
+        boolean isHuawei=android.os.Build.MANUFACTURER.equalsIgnoreCase("HUAWEI")
+                ||android.os.Build.BRAND.equalsIgnoreCase("HUAWEI");
+        // Reduced blur radius on Huawei devices to keep EMUI scrolling responsive.
+        glass.setupWith(blurTarget)
+                .setBlurRadius(isHuawei?12f:18f)
+                .setOverlayColor(isHuawei?0xB8182636:0x94182636);
+        glassBar.addView(glass,new FrameLayout.LayoutParams(-1,-1));
+
+        LinearLayout items=new LinearLayout(this);
+        items.setGravity(Gravity.CENTER);
+        items.setOrientation(LinearLayout.HORIZONTAL);
+        items.setPadding(dp(7),dp(7),dp(7),dp(7));
+        items.setBackgroundColor(Color.TRANSPARENT);
 
         String[] labels={"Чаты","Контакты","Лента","Настройки","Профиль"};
         String[] icons={"▤","♧","▧","⚙","●"};
@@ -163,11 +188,22 @@ public final class MainActivity extends Activity {
             item.setGravity(Gravity.CENTER);
             item.setOrientation(1);
             item.setPadding(dp(2),dp(7),dp(2),dp(7));
-            item.setBackground(round(selected?0xFF253653:Color.TRANSPARENT,22));
+            if(selected){
+                android.graphics.drawable.GradientDrawable pill=
+                        new android.graphics.drawable.GradientDrawable(
+                                android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                                new int[]{0x3AFFFFFF,0x16FFFFFF});
+                pill.setCornerRadius(dp(22));
+                pill.setStroke(dp(1),0x4DFFFFFF);
+                item.setBackground(pill);
+                item.setElevation(dp(2));
+            }else{
+                item.setBackgroundColor(Color.TRANSPARENT);
+            }
 
-            TextView icon=label(icons[i],20,selected?ACCENT:0xFF9AA5B5,true);
+            TextView icon=label(icons[i],20,selected?Color.WHITE:0xFFB7C5D6,true);
             icon.setGravity(Gravity.CENTER);
-            TextView text=label(labels[i],10,selected?0xFFE8EEFF:0xFF9AA5B5,true);
+            TextView text=label(labels[i],10,selected?0xFFF4F7FF:0xFFB7C5D6,true);
             text.setGravity(Gravity.CENTER);
             text.setMaxLines(1);
             text.setIncludeFontPadding(false);
@@ -176,7 +212,7 @@ public final class MainActivity extends Activity {
 
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(58),1);
             lp.setMargins(dp(2),0,dp(2),0);
-            navBar.addView(item,lp);
+            items.addView(item,lp);
             item.setContentDescription(labels[i]);
             item.setOnClickListener(v->navigate(screen));
             item.setOnTouchListener((v,event)->{
@@ -184,10 +220,12 @@ public final class MainActivity extends Activity {
                     v.animate().scaleX(.96f).scaleY(.96f).setDuration(80).start();
                 else if(event.getAction()==android.view.MotionEvent.ACTION_UP ||
                         event.getAction()==android.view.MotionEvent.ACTION_CANCEL)
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(110).start();
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(130).start();
                 return false;
             });
         }
+        glassBar.addView(items,new FrameLayout.LayoutParams(-1,-1));
+        navBar=glassBar;
         LinearLayout.LayoutParams navParams=new LinearLayout.LayoutParams(-1,-2);
         navParams.setMargins(dp(14),dp(5),dp(14),dp(10));
         root.addView(navBar,navParams);
