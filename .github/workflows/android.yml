@@ -101,34 +101,29 @@ jobs:
             echo "All required Android SDK components are already installed."
           fi
 
-      - name: Prepare persistent signing key
-        id: signing
+      - name: Require production signing key
         shell: bash
         run: |
-          if [[ -z "$KENTGRAM_KEYSTORE_BASE64" || -z "$KENTGRAM_KEYSTORE_PASSWORD" || -z "$KENTGRAM_KEY_ALIAS" || -z "$KENTGRAM_KEY_PASSWORD" ]]; then
-            echo 'configured=false' >> "$GITHUB_OUTPUT"
-            echo 'Signing secrets unavailable; producing an unsigned CI APK.'
-            exit 0
-          fi
+          set -Eeuo pipefail
+          test -n "$KENTGRAM_KEYSTORE_BASE64"
+          test -n "$KENTGRAM_KEYSTORE_PASSWORD"
+          test -n "$KENTGRAM_KEY_ALIAS"
+          test -n "$KENTGRAM_KEY_PASSWORD"
           mkdir -p "$RUNNER_TEMP/kentgram-signing"
           printf '%s' "$KENTGRAM_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/kentgram-signing/kentgram-upload.jks"
           test -s "$RUNNER_TEMP/kentgram-signing/kentgram-upload.jks"
           echo "KENTGRAM_KEYSTORE_PATH=$RUNNER_TEMP/kentgram-signing/kentgram-upload.jks" >> "$GITHUB_ENV"
-          echo 'configured=true' >> "$GITHUB_OUTPUT"
 
-      - name: Build debug APK
+      - name: Build signed release APK
         shell: bash
-        # The wrapper keeps Gradle 8.9 in ~/.gradle/wrapper instead of downloading
-        # it every run; ~/.gradle also holds dependencies and the build cache
-        # (org.gradle.caching=true), so unchanged tasks come FROM-CACHE.
-        # Gradle prunes entries unused for 7 (build cache) / 30 days by itself.
-        run: ./gradlew --console=plain assembleDebug
+        run: ./gradlew --no-daemon --console=plain assembleRelease
 
-      - name: Verify APK signature
-        if: steps.signing.outputs.configured == 'true'
+      - name: Verify release APK signature
         shell: bash
         run: |
-          APK='app/build/outputs/apk/debug/app-debug.apk'
+          set -Eeuo pipefail
+          APK='app/build/outputs/apk/release/app-release.apk'
+          test -s "$APK"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$APK"
 
       - name: Write build metadata
@@ -139,16 +134,16 @@ jobs:
             echo "branch=$GITHUB_REF_NAME"
             echo "run_id=$GITHUB_RUN_ID"
             echo "run_number=$GITHUB_RUN_NUMBER"
-            echo "signed=${{ steps.signing.outputs.configured }}"
-          } > app/build/outputs/apk/debug/build-info.txt
+            echo "signed=true"
+          } > app/build/outputs/apk/release/build-info.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: kentgram-apk-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/debug/build-info.txt
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/apk/release/build-info.txt
           if-no-files-found: error
           retention-days: 14
           # The APK is already compressed; zipping it again only costs time.
