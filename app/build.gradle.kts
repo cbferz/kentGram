@@ -48,6 +48,9 @@ android {
             }
         }
         release {
+            if (hasCiSigning) {
+                signingConfig = signingConfigs.getByName("ci")
+            }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
