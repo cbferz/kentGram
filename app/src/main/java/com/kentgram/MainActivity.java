@@ -2193,10 +2193,12 @@ public final class MainActivity extends Activity {
                     failed.accept(result.body,result.status);
                     return;
                 }
+                String endpoint=result.body.optString("method","")+" "+result.body.optString("path","");
+                String detail=result.body.optString("error","Ошибка соединения")+" ("+result.status+")";
+                if(!endpoint.trim().isEmpty())detail+="\\n"+endpoint;
                 KentDialog.showMessage(this,
-                        result.status==404?"Маршрут не найден":"Не удалось выполнить запрос",
-                        result.body.optString("error","Ошибка соединения")+" ("+result.status+")",
-                        "Понятно",null);
+                        result.status==404?"Маршрут не найден":result.status==405?"Метод не поддерживается":"Не удалось выполнить запрос",
+                        detail,"Понятно",null);
             });
         });
     }

@@ -38,6 +38,16 @@ func New(db *store.Store, cfg config.Config) *API {
 func (a *API) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, webCORS, securityHeaders)
+	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "endpoint_not_found", "method": req.Method, "path": req.URL.Path,
+		})
+	})
+	r.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{
+			"error": "method_not_allowed", "method": req.Method, "path": req.URL.Path,
+		})
+	})
 
 	r.Get("/health", a.health)
 	r.Get("/media/avatars/{filename}", a.avatarFile)

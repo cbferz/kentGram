@@ -252,6 +252,13 @@ final class Session {
             }else if(status<200||status>=300){
                 json=error(status>=500?"server_error":"http_error");
             }
+            if(status==404 && json.optString("error","").equals("endpoint_not_found")){
+                try{json.put("method",method);json.put("path",path);}
+                catch(JSONException ignored){}
+            }else if(status==405 && json.optString("error","").equals("method_not_allowed")){
+                try{json.put("method",method);json.put("path",path);}
+                catch(JSONException ignored){}
+            }
             return new Result(status,json,false);
         }catch(IOException|RuntimeException failure){
             return Result.offline();

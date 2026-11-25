@@ -65,8 +65,12 @@
     const type = response.headers.get("content-type") || "";
     const data = type.includes("application/json") ? await response.json().catch(() => ({})) : {};
     if (!response.ok) {
-      const error = new Error(data.error || "request_failed");
+      const endpoint = (options.method || "GET").toUpperCase() + " " + path;
+      const code = data.error || "request_failed";
+      const error = new Error((code === "endpoint_not_found" || code === "method_not_allowed")
+        ? code + " · " + endpoint : code);
       error.status = response.status;
+      error.endpoint = endpoint;
       throw error;
     }
     return data;
